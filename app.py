@@ -30,16 +30,20 @@ def fetch_and_parse_recipe(url):
         prompt = f"""
         Analyze the following recipe web page text and convert it into a structured JSON object.
         
+        CRITICAL DIRECTIVES:
+        1. Cross-reference generic terms (e.g., "dry ingredients", "the vegetables") with the master ingredient list. Explicitly list the exact ingredients and their measurements directly in the step text so the user never has to look elsewhere.
+        2. For EVERY measurement, calculate and provide at least three unit variations: Original, Metric (grams/ml), and Imperial (ounces/cups/lbs).
+        
         JSON Schema Requirements:
         1. "title": String name of recipe.
         2. "steps": List of object steps containing:
             - "step_number": Integer
-            - "text": String instruction. Ensure all measurements needed are explicitly embedded inline in this text sentence.
+            - "text": String instruction replacing all vague terms with explicit ingredients and quantities.
             - "timer_minutes": Integer (cooking duration, 0 if none).
-            - "ingredients_in_step": List of strings for ingredients used in this step.
+            - "ingredients_in_step": List of specific strings for individual ingredients used in this step.
             - "measurements": List of objects for each measurement found in the step text:
-                - "label": String name of ingredient/item being measured.
-                - "options": List of strings containing converted values (e.g., ["2 cups", "240 grams", "8.4 oz"]).
+                - "label": String name of specific ingredient being measured.
+                - "options": List of strings containing converted values (e.g., ["1 cup", "120 grams", "4.2 oz"]).
         
         Recipe Source Text:
         {text_content[:8000]}
@@ -57,8 +61,7 @@ def fetch_and_parse_recipe(url):
                 return json.loads(cleaned_text)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    # Increased delay to 15 seconds to bypass the 5 RPM free tier limit
-                    time.sleep(15) 
+                    time.sleep(2) 
                     continue
                 else:
                     st.error(f"API Error after {max_retries} attempts: {e}")
@@ -70,7 +73,7 @@ def fetch_and_parse_recipe(url):
 
 if st.button("Process Recipe"):
     if url_input:
-        with st.spinner("Gemini is parsing and converting recipe content. This may take up to a minute due to rate limits..."):
+        with st.spinner("Gemini is parsing and converting recipe content..."):
             recipe = fetch_and_parse_recipe(url_input)
             if recipe:
                 st.session_state.recipe_data = recipe
