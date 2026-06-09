@@ -11,40 +11,26 @@ if "GEMINI_API_KEY" in st.secrets:
 if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
-INGREDIENT_DENSITIES = {"flour": 120.0, "sugar": 200.0, "butter": 227.0, "water": 236.6, "milk": 240.0, "oil": 218.0, "salt": 270.0, "baking powder": 192.0, "baking soda": 288.0}
-
-# --- Helpers ---
-def convert_units(amount, unit, name):
-    unit, name = unit.lower().strip(), name.lower().strip()
-    base_cups = amount if unit in ["cup", "cups"] else (amount/16.0 if unit == "tbsp" else (amount/48.0 if unit == "tsp" else amount))
-    grams = base_cups * INGREDIENT_DENSITIES.get(name, 236.6)
-    return [f"{amount} {unit.capitalize()}", f"{grams:.1f} Grams", f"{grams/28.35:.1f} Ounces"]
-
+# --- Logic ---
 def fetch_and_parse(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:]
         
-        prompt = f"""Convert to JSON with steps: [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [ {{"name": "...", "amount": 0.0, "unit": "..."}} ] }} ]. 
-        If no ingredients for a step, use an empty list []. Source: {text[:1500]}"""
+        # Force a strict dict structure
+        prompt = f"""Return ONLY a JSON object: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
+        Source: {text[:1500]}"""
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         res = model.generate_content(prompt)
         raw = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
         
-        # Atomic split
-        final_steps = []
-        for step in raw.get('steps', []):
-            sentences = [s.strip() for s in step.get('description', '').replace(';', '.').split('.') if s.strip()]
-            for i, sub in enumerate(sentences):
-                final_steps.append({
-                    'action_header': step.get('action_header', 'Step'), 
-                    'description': sub, 
-                    'timer_minutes': step.get('timer_minutes', 0) if i == len(sentences)-1 else 0,
-                    'ingredients': step.get('ingredients', []) if i == 0 else []
-                })
-        return {"steps": final_steps}
+        # Force "raw" to be a dictionary if Gemini returned a list
+        if isinstance(raw, list):
+            raw = {"steps": raw}
+            
+        return raw
     except Exception as e:
         return {"error": str(e)}
 
@@ -54,7 +40,7 @@ st.title("Interactive AI Kitchen")
 if st.session_state.recipe_data is None:
     url = st.text_input("Paste Recipe URL:")
     if st.button("Start Cooking"):
-        with st.spinner("Parsing recipe..."):
+        with st.spinner("Parsing..."):
             st.session_state.recipe_data = fetch_and_parse(url)
             st.session_state.current_step = 0
             st.rerun()
@@ -64,10 +50,14 @@ else:
         st.rerun()
 
     recipe = st.session_state.recipe_data
-    if "error" in recipe: st.error(recipe["error"])
+    if "error" in recipe: 
+        st.error(f"Parsing error: {recipe['error']}")
     else:
-        step = recipe['steps'][st.session_state.current_step]
-        st.caption(f"Step {st.session_state.current_step + 1} of {len(recipe['steps'])}")
+        # Safely access steps
+        steps = recipe.get('steps', [])
+        step = steps[st.session_state.current_step]
+        
+        st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
         st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
         st.info(step.get('description', ''))
         
@@ -75,12 +65,10 @@ else:
             st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
         
         for i, ing in enumerate(step.get('ingredients', [])):
-            c1, c2 = st.columns([1, 2])
-            c1.checkbox(ing.get('name', 'Item'), key=f"c_{st.session_state.current_step}_{i}")
-            c2.selectbox(ing.get('name', 'Item'), options=convert_units(ing.get('amount', 0), ing.get('unit', ''), ing.get('name', '')), label_visibility="collapsed")
+            st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})")
         
         c1, c2 = st.columns(2)
         if c1.button("Back") and st.session_state.current_step > 0:
             st.session_state.current_step -= 1; st.rerun()
-        if c2.button("Next") and st.session_state.current_step < len(recipe['steps'])-1:
+        if c2.button("Next") and st.session_state.current_step < len(steps)-1:
             st.session_state.current_step += 1; st.rerun()
