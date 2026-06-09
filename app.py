@@ -13,6 +13,7 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
+@st.cache_data(show_spinner=False)
 def fetch_and_parse(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -48,7 +49,6 @@ js_paste = """
 
 if st.session_state.recipe_data is None:
     val = components.html(js_paste, height=50)
-    # If the JS component returns a value, it means the user clicked it
     if val:
         with st.spinner("Parsing..."):
             st.session_state.recipe_data = fetch_and_parse(val)
@@ -68,6 +68,11 @@ else:
 
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
+    
+    # Safety Index Check
+    if st.session_state.current_step >= len(steps):
+        st.session_state.current_step = 0
+    
     step = steps[st.session_state.current_step]
     
     st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
