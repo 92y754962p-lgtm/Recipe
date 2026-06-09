@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import json
 
-# Configuration
+# --- Configuration ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
@@ -22,8 +22,9 @@ INGREDIENT_DENSITIES = {
     "salt": 270.0, "baking powder": 192.0, "baking soda": 288.0
 }
 
-def convert_units(amount, unit, ingredient_name):
-    unit, name = unit.lower().strip(), ingredient_name.lower().strip()
+# --- Logic ---
+def convert_units(amount, unit, name):
+    unit, name = unit.lower().strip(), name.lower().strip()
     if unit in ["batch", "mixture"]: return [f"{amount} {unit.capitalize()}"]
     if unit in ["cup", "cups"]: base_cups = amount
     elif unit in ["tbsp"]: base_cups = amount / 16.0
@@ -32,25 +33,46 @@ def convert_units(amount, unit, ingredient_name):
     grams = base_cups * INGREDIENT_DENSITIES.get(name, 236.6)
     return [f"{amount} {unit.capitalize()}", f"{grams:.1f} Grams", f"{grams/28.35:.1f} Ounces"]
 
+def process_steps_atomically(recipe_data):
+    new_steps = []
+    for step in recipe_data.get('steps', []):
+        desc = step.get('description', '')
+        sentences = [s.strip() for s in desc.replace(';', '.').split('.') if s.strip()]
+        for i, sub_desc in enumerate(sentences):
+            new_step = step.copy()
+            new_step['description'] = sub_desc
+            if i > 0: new_step['ingredients'] = []
+            elif 'ingredients' not in new_step: new_step['ingredients'] = []
+            new_steps.append(new_step)
+    return new_steps
+
 def fetch_and_parse_recipe(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
-        # Aggressive filtering: Only grab likely instruction/ingredient tags
+        
+        # Scrape and Aggressively Filter
         recipe_text = ""
         for tag in soup.find_all(['h1', 'h2', 'li', 'p']):
             text = tag.get_text().strip()
             if len(text) > 10: recipe_text += text + "\n"
         
+        # Skip first 1000 chars to bypass intro fluff
+        recipe_text = recipe_text[1000:]
+        
         prompt = f"Convert to JSON (title, steps: [{{\"action_header\": \"...\", \"description\": \"...\", \"ingredients\": [{{\"name\": \"...\", \"amount\": 0.0, \"unit\": \"...\"}}]}}]). No commentary. Source: {recipe_text[:1500]}"
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         response = model.generate_content(prompt)
-        return json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        raw_recipe = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        
+        raw_recipe['steps'] = process_steps_atomically(raw_recipe)
+        return raw_recipe
     except Exception as e:
-        st.error(f"Processing Error: {e}")
+        st.error(f"Error: {e}")
         return None
 
+# --- UI ---
 if st.button("Process Recipe"):
     with st.spinner("Analyzing recipe..."):
         recipe = fetch_and_parse_recipe(url_input)
@@ -61,6 +83,7 @@ if st.button("Process Recipe"):
 
 if st.session_state.recipe_data:
     recipe = st.session_state.recipe_data
+    if st.session_state.current_step >= len(recipe['steps']): st.session_state.current_step = 0
     step = recipe['steps'][st.session_state.current_step]
     
     st.progress((st.session_state.current_step + 1) / len(recipe['steps']))
