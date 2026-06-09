@@ -18,7 +18,6 @@ def fetch_and_parse(url):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:]
         
-        # Force a strict dict structure
         prompt = f"""Return ONLY a JSON object: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
         Source: {text[:1500]}"""
         
@@ -26,10 +25,7 @@ def fetch_and_parse(url):
         res = model.generate_content(prompt)
         raw = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
         
-        # Force "raw" to be a dictionary if Gemini returned a list
-        if isinstance(raw, list):
-            raw = {"steps": raw}
-            
+        if isinstance(raw, list): raw = {"steps": raw}
         return raw
     except Exception as e:
         return {"error": str(e)}
@@ -38,37 +34,36 @@ def fetch_and_parse(url):
 st.title("Interactive AI Kitchen")
 
 if st.session_state.recipe_data is None:
-    url = st.text_input("Paste Recipe URL:")
-    if st.button("Start Cooking"):
+    # We use a simple input. If you have the URL copied, 
+    # you can just press 'Ctrl+V' (or Command+V) then 'Enter'.
+    url = st.text_input("Paste Recipe URL:", key="url_in")
+    if url: # Auto-detect input
         with st.spinner("Parsing..."):
             st.session_state.recipe_data = fetch_and_parse(url)
             st.session_state.current_step = 0
             st.rerun()
 else:
+    # Sidebar control
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
         st.rerun()
 
     recipe = st.session_state.recipe_data
-    if "error" in recipe: 
-        st.error(f"Parsing error: {recipe['error']}")
-    else:
-        # Safely access steps
-        steps = recipe.get('steps', [])
-        step = steps[st.session_state.current_step]
-        
-        st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
-        st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
-        st.info(step.get('description', ''))
-        
-        if step.get('timer_minutes', 0) > 0:
-            st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
-        
-        for i, ing in enumerate(step.get('ingredients', [])):
-            st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})")
-        
-        c1, c2 = st.columns(2)
-        if c1.button("Back") and st.session_state.current_step > 0:
-            st.session_state.current_step -= 1; st.rerun()
-        if c2.button("Next") and st.session_state.current_step < len(steps)-1:
-            st.session_state.current_step += 1; st.rerun()
+    steps = recipe.get('steps', [])
+    step = steps[st.session_state.current_step]
+    
+    st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
+    st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
+    st.info(step.get('description', ''))
+    
+    if step.get('timer_minutes', 0) > 0:
+        st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
+    
+    for i, ing in enumerate(step.get('ingredients', [])):
+        st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})")
+    
+    c1, c2 = st.columns(2)
+    if c1.button("Back") and st.session_state.current_step > 0:
+        st.session_state.current_step -= 1; st.rerun()
+    if c2.button("Next") and st.session_state.current_step < len(steps)-1:
+        st.session_state.current_step += 1; st.rerun()
