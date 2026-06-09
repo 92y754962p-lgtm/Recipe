@@ -20,20 +20,20 @@ def convert_units(amount, unit, name):
     grams = base_cups * INGREDIENT_DENSITIES.get(name, 236.6)
     return [f"{amount} {unit.capitalize()}", f"{grams:.1f} Grams", f"{grams/28.35:.1f} Ounces"]
 
-@st.cache_data(show_spinner=False)
 def fetch_and_parse(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:]
         
-        prompt = f"""Convert to JSON: {{"preheat": "350F", "steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [ {{"name": "...", "amount": 0.0, "unit": "..."}} ] }} ] }}. 
-        If no timer, set timer_minutes to 0. Source: {text[:1500]}"""
+        prompt = f"""Convert to JSON with steps: [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [ {{"name": "...", "amount": 0.0, "unit": "..."}} ] }} ]. 
+        If no ingredients for a step, use an empty list []. Source: {text[:1500]}"""
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         res = model.generate_content(prompt)
         raw = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
         
+        # Atomic split
         final_steps = []
         for step in raw.get('steps', []):
             sentences = [s.strip() for s in step.get('description', '').replace(';', '.').split('.') if s.strip()]
@@ -44,44 +44,43 @@ def fetch_and_parse(url):
                     'timer_minutes': step.get('timer_minutes', 0) if i == len(sentences)-1 else 0,
                     'ingredients': step.get('ingredients', []) if i == 0 else []
                 })
-        raw['steps'] = final_steps
-        return raw
+        return {"steps": final_steps}
     except Exception as e:
         return {"error": str(e)}
 
 # --- UI ---
 st.title("Interactive AI Kitchen")
-url = st.text_input("Paste Recipe URL:")
 
-if st.button("Start Cooking"):
-    with st.spinner("Parsing recipe..."):
-        data = fetch_and_parse(url)
-        if "error" in data: st.error(data["error"])
-        else:
-            st.session_state.recipe_data = data
+if st.session_state.recipe_data is None:
+    url = st.text_input("Paste Recipe URL:")
+    if st.button("Start Cooking"):
+        with st.spinner("Parsing recipe..."):
+            st.session_state.recipe_data = fetch_and_parse(url)
             st.session_state.current_step = 0
             st.rerun()
+else:
+    if st.sidebar.button("Clear / New Recipe"):
+        st.session_state.recipe_data = None
+        st.rerun()
 
-if st.session_state.recipe_data:
     recipe = st.session_state.recipe_data
-    if st.session_state.current_step == 0 and recipe.get("preheat"):
-        st.warning(f"🔥 Preheat oven to: {recipe['preheat']}")
-    
-    step = recipe['steps'][st.session_state.current_step]
-    st.caption(f"Step {st.session_state.current_step + 1} of {len(recipe['steps'])}")
-    st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
-    st.info(step.get('description', ''))
-    
-    if step.get('timer_minutes', 0) > 0:
-        st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
-    
-    for i, ing in enumerate(step.get('ingredients', [])):
-        c1, c2 = st.columns([1, 2])
-        c1.checkbox(ing.get('name', 'Item'), key=f"c_{st.session_state.current_step}_{i}")
-        c2.selectbox(ing.get('name', 'Item'), options=convert_units(ing.get('amount', 0), ing.get('unit', ''), ing.get('name', '')), label_visibility="collapsed")
-    
-    c1, c2 = st.columns(2)
-    if c1.button("Back") and st.session_state.current_step > 0:
-        st.session_state.current_step -= 1; st.rerun()
-    if c2.button("Next") and st.session_state.current_step < len(recipe['steps'])-1:
-        st.session_state.current_step += 1; st.rerun()
+    if "error" in recipe: st.error(recipe["error"])
+    else:
+        step = recipe['steps'][st.session_state.current_step]
+        st.caption(f"Step {st.session_state.current_step + 1} of {len(recipe['steps'])}")
+        st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
+        st.info(step.get('description', ''))
+        
+        if step.get('timer_minutes', 0) > 0:
+            st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
+        
+        for i, ing in enumerate(step.get('ingredients', [])):
+            c1, c2 = st.columns([1, 2])
+            c1.checkbox(ing.get('name', 'Item'), key=f"c_{st.session_state.current_step}_{i}")
+            c2.selectbox(ing.get('name', 'Item'), options=convert_units(ing.get('amount', 0), ing.get('unit', ''), ing.get('name', '')), label_visibility="collapsed")
+        
+        c1, c2 = st.columns(2)
+        if c1.button("Back") and st.session_state.current_step > 0:
+            st.session_state.current_step -= 1; st.rerun()
+        if c2.button("Next") and st.session_state.current_step < len(recipe['steps'])-1:
+            st.session_state.current_step += 1; st.rerun()
