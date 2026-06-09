@@ -92,4 +92,25 @@ else:
             ing_name = ing.get('name', 'Ingredient')
             options = ing.get('amount_options', ["Amount not specified"])
             
-            st.checkbox(ing_name, key=f"check_{st.session_}
+            # FIXED: Completed the broken f-string here
+            st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
+            
+            st.selectbox(
+                label=f"amount_{st.session_state.current_step}_{i}",
+                options=options,
+                key=f"select_{st.session_state.current_step}_{i}",
+                label_visibility="collapsed"
+            )
+        
+        # Spacer column pushes buttons to the right
+        col_space, col_back, col_next = st.columns([0.7, 0.15, 0.15])
+        
+        with col_back:
+            if st.button("Back") and st.session_state.current_step > 0:
+                st.session_state.current_step -= 1
+                st.rerun()
+                
+        with col_next:
+            if st.button("Next") and st.session_state.current_step < len(steps)-1:
+                st.session_state.current_step += 1
+                st.rerun()
