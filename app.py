@@ -28,13 +28,12 @@ def get_recipe(url, target_servings, status_container):
         status_container.update(label="Pass 1: Extracting...", state="running")
         extract_prompt = f"Extract recipe as JSON with keys 'original_servings' and 'steps' (each step with 'action_header', 'description', 'ingredients' containing 'name' and 'original_amount'). Source: {text}"
         res1 = model.generate_content(extract_prompt)
-        
-        # CRASH FIX: Log and handle bad JSON
         raw_json1 = res1.text.strip().replace("```json", "").replace("```", "")
+        
         try:
             extracted_data = json.loads(raw_json1)
-        except json.JSONDecodeError:
-            return {"error": f"AI returned invalid JSON: {raw_json1[:100]}..."}
+        except:
+            return {"error": "AI returned invalid JSON in Pass 1."}
             
         original_servings = extracted_data.get("original_servings", 1)
         
@@ -42,12 +41,12 @@ def get_recipe(url, target_servings, status_container):
         status_container.update(label="Pass 2: Scaling...", state="running")
         scale_prompt = f"Scale this JSON to {target_servings} servings. Provide 'amount_options' list for each ingredient. JSON: {json.dumps(extracted_data)}"
         res2 = model.generate_content(scale_prompt)
-        
         raw_json2 = res2.text.strip().replace("```json", "").replace("```", "")
+        
         try:
             final_data = json.loads(raw_json2)
-        except json.JSONDecodeError:
-            return {"error": f"AI returned invalid JSON in Pass 2: {raw_json2[:100]}..."}
+        except:
+            return {"error": "AI returned invalid JSON in Pass 2."}
         
         status_container.update(label="Complete!", state="complete")
         return final_data
@@ -72,6 +71,48 @@ if st.session_state.recipe_data is None:
             st.error(result['error'])
         else:
             st.session_state.recipe_data = result
+            st.session_state.current_step = 0
             st.rerun()
 else:
-    # ... (Keep existing UI code from previous version here) ...
+    if st.sidebar.button("Clear / New Recipe"):
+        st.session_state.recipe_data = None
+        st.rerun()
+
+    recipe = st.session_state.recipe_data
+    steps = recipe.get('steps', [])
+    
+    if steps:
+        if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
+        step = steps[st.session_state.current_step]
+        
+        st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
+        st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
+        st.info(step.get('description', ''))
+        
+        if step.get('timer_minutes', 0) > 0:
+            st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
+        
+        for i, ing in enumerate(step.get('ingredients', [])):
+            ing_name = ing.get('name', 'Ingredient')
+            options = ing.get('amount_options', ["Amount not specified"])
+            
+            st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
+            
+            st.selectbox(
+                label=f"amount_{st.session_state.current_step}_{i}",
+                options=options,
+                key=f"select_{st.session_state.current_step}_{i}",
+                label_visibility="collapsed"
+            )
+        
+        col_space, col_back, col_next = st.columns([6, 1, 1])
+        with col_space: st.empty() 
+        with col_back:
+            if st.button("Back", use_container_width=True) and st.session_state.current_step > 0:
+                st.session_state.current_step -= 1
+                st.rerun()
+        with col_next:
+            if st.button("Next", use_container_width=True) and st.session_state.current_step < len(steps)-1:
+                st.session_state.current_step += 1
+                st.rerun()
+p
