@@ -57,7 +57,8 @@ def fetch_and_parse_recipe(url):
                 return json.loads(cleaned_text)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    time.sleep(2) # 2-second delay before retrying
+                    # Increased delay to 15 seconds to bypass the 5 RPM free tier limit
+                    time.sleep(15) 
                     continue
                 else:
                     st.error(f"API Error after {max_retries} attempts: {e}")
@@ -69,7 +70,7 @@ def fetch_and_parse_recipe(url):
 
 if st.button("Process Recipe"):
     if url_input:
-        with st.spinner("Gemini is parsing and converting recipe content..."):
+        with st.spinner("Gemini is parsing and converting recipe content. This may take up to a minute due to rate limits..."):
             recipe = fetch_and_parse_recipe(url_input)
             if recipe:
                 st.session_state.recipe_data = recipe
@@ -97,45 +98,4 @@ if st.session_state.recipe_data:
             st.write("**Unit Conversions:**")
             cols = st.columns(len(measurements))
             for i, meas in enumerate(measurements):
-                with cols[i % len(cols)]:
-                    st.selectbox(
-                        label=meas.get("label", f"Unit {i+1}"),
-                        options=meas.get("options", []),
-                        key=f"meas_{idx}_{i}"
-                    )
-        
-        # Step Ingredient Multi-Checklist
-        ingredients = step.get("ingredients_in_step", [])
-        if len(ingredients) > 1:
-            st.write("**Ingredient Tracker:**")
-            for ing in ingredients:
-                st.checkbox(ing, key=f"check_{idx}_{ing}")
-        elif len(ingredients) == 1:
-            st.write(f"**Ingredient Active:** {ingredients[0]}")
-            
-        # Contextual Step Timer
-        timer_mins = step.get("timer_minutes", 0)
-        if timer_mins > 0:
-            st.write("**Active Step Timer:**")
-            timer_display = st.empty()
-            if st.button("Start Countdown", key=f"timer_start_{idx}"):
-                total_seconds = timer_mins * 60
-                while total_seconds > 0:
-                    m, s = divmod(total_seconds, 60)
-                    timer_display.metric("Time Remaining", f"{m:02d}:{s:02d}")
-                    time.sleep(1)
-                    total_seconds -= 1
-                timer_display.success("Timer Complete!")
-        
-        st.write("---")
-        
-        # Interface Navigation Buttons
-        nav_cols = st.columns([1, 1, 4])
-        with nav_cols[0]:
-            if st.button("Back", disabled=(idx == 0)):
-                st.session_state.current_step -= 1
-                st.rerun()
-        with nav_cols[1]:
-            if st.button("Next", disabled=(idx == len(steps) - 1)):
-                st.session_state.current_step += 1
-                st.rerun()
+                with cols[i % len
