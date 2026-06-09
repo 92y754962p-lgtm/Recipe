@@ -1,57 +1,61 @@
 import streamlit as st
-import json
-import requests
-from bs4 import BeautifulSoup
-import google.generativeai as genai
+from recipe_scrapers import scrape_me
 
-# --- Config ---
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+# --- Initialize State ---
+if "recipe" not in st.session_state: st.session_state.recipe = None
+if "step" not in st.session_state: st.session_state.step = 0
 
-def extract_schema_recipe(url):
-    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Locate the JSON-LD script block containing 'recipeIngredient'
-    scripts = soup.find_all('script', type='application/ld+json')
-    for script in scripts:
-        data = json.loads(script.string)
-        # Handle cases where it's a list of schemas or a single dict
-        if isinstance(data, list):
-            for item in data:
-                if item.get('@type') == 'Recipe': return item
-        elif data.get('@type') == 'Recipe':
-            return data
-    return None
-
-# --- UI ---
 st.title("Interactive Kitchen")
 
-url = st.text_input("URL:")
-if st.button("Fetch"):
-    recipe = extract_schema_recipe(url)
-    if recipe:
+# --- Fetching ---
+url = st.text_input("Paste Recipe URL:")
+if st.button("Fetch and Build"):
+    try:
+        scraper = scrape_me(url)
         st.session_state.recipe = {
-            "title": recipe.get("name"),
-            "ingredients": recipe.get("recipeIngredient"),
-            "instructions": [step['text'] if isinstance(step, dict) else step 
-                           for step in recipe.get("recipeInstructions", [])]
+            "title": scraper.title(),
+            "ingredients": scraper.ingredients(),
+            "instructions": scraper.instructions_list()
         }
         st.session_state.step = 0
         st.rerun()
-    else:
-        st.error("Could not find schema data on this page.")
+    except Exception as e:
+        st.error(f"Scraper error: {e}")
 
-if "recipe" in st.session_state:
+# --- Display Section ---
+if st.session_state.recipe:
     r = st.session_state.recipe
     
-    # Sidebar: Raw ingredients from database (100% accurate)
+    # 1. Sidebar (Master Ingredient List)
     with st.sidebar:
-        st.header(r["title"])
+        st.header("Ingredients")
         for ing in r["ingredients"]:
             st.write(f"• {ing}")
-            
-    # Main: Instructions (Untouched raw text)
-    st.info(r["instructions"][st.session_state.step])
+        if st.button("Clear / New Recipe"):
+            st.session_state.recipe = None
+            st.rerun()
+
+    # 2. Main Step Display (Untouched text)
+    st.subheader(r["title"])
+    st.caption(f"Step {st.session_state.step + 1} of {len(r['instructions'])}")
     
-    if st.button("Next") and st.session_state.step < len(r["instructions"])-1:
+    # Raw Step Text (No LLM)
+    step_text = r["instructions"][st.session_state.step]
+    st.info(step_text)
+    
+    # 3. Interactive Row for each Ingredient
+    # Note: We display all ingredients in the sidebar; 
+    # for the interactive row, we show them here as requested.
+    st.write("---")
+    st.subheader("Items in this step:")
+    for ing in r["ingredients"]:
+        c1, c2 = st.columns([0.7, 0.3])
+        c1.checkbox(ing)
+        c2.selectbox("Unit", ["Original", "Metric", "Imperial"], key=f"sel_{ing}", label_visibility="collapsed")
+    
+    # 4. Navigation
+    c1, c2, c3 = st.columns([1, 4, 1])
+    if c1.button("Back") and st.session_state.step > 0:
+        st.session_state.step -= 1; st.rerun()
+    if c3.button("Next") and st.session_state.step < len(r["instructions"])-1:
         st.session_state.step += 1; st.rerun()
