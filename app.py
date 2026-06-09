@@ -8,6 +8,8 @@ genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 if "recipe" not in st.session_state: st.session_state.recipe = None
 if "step" not in st.session_state: st.session_state.step = 0
+# Initialize storage for checkbox states
+if "checked_ingredients" not in st.session_state: st.session_state.checked_ingredients = {}
 
 st.title("Interactive Kitchen")
 
@@ -17,8 +19,6 @@ if st.button("Fetch and Build", use_container_width=True):
     with st.status("Structuring recipe...", expanded=True) as status:
         try:
             scraper = scrape_me(url)
-            
-            # LLM only used to map ingredients to steps and generate conversions
             model = genai.GenerativeModel("gemini-3.5-flash")
             prompt = f"""
             Map these ingredients to these steps.
@@ -37,6 +37,7 @@ if st.button("Fetch and Build", use_container_width=True):
             
             st.session_state.recipe = {"title": scraper.title(), "all_ing": scraper.ingredients(), **data}
             st.session_state.step = 0
+            st.session_state.checked_ingredients = {} # Reset checkboxes on new fetch
             st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
@@ -53,10 +54,14 @@ if st.session_state.recipe:
     st.subheader(f"Step {st.session_state.step + 1}")
     st.info(curr["text"])
     
-    # Ingredient Dropdowns
+    # Functional Checkboxes + Dropdowns
     for ing in curr["ingredients"]:
         c1, c2 = st.columns([0.6, 0.4])
-        c1.write(ing["name"])
+        
+        # Checkbox state stored in session_state
+        checkbox_key = f"chk_{st.session_state.step}_{ing['name']}"
+        c1.checkbox(ing["name"], key=checkbox_key)
+        
         c2.selectbox("Unit", ing["conversions"], key=f"sel_{ing['name']}", label_visibility="collapsed")
     
     # Navigation
