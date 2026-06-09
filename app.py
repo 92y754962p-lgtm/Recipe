@@ -92,17 +92,4 @@ else:
             ing_name = ing.get('name', 'Ingredient')
             options = ing.get('amount_options', ["Amount not specified"])
             
-            st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
-            
-            st.selectbox(
-                label=f"amount_{st.session_state.current_step}_{i}",
-                options=options,
-                key=f"select_{st.session_state.current_step}_{i}",
-                label_visibility="collapsed"
-            )
-        
-        c1, c2 = st.columns(2)
-        if c1.button("Back") and st.session_state.current_step > 0:
-            st.session_state.current_step -= 1; st.rerun()
-        if c2.button("Next") and st.session_state.current_step < len(steps)-1:
-            st.session_state.current_step += 1; st.rerun()
+            st.checkbox(ing_name, key=f"check_{st.session_
