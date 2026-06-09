@@ -8,7 +8,6 @@ import json
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Initialize session state variables
 if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
@@ -21,14 +20,14 @@ def convert_units(amount, unit, name):
     grams = base_cups * INGREDIENT_DENSITIES.get(name, 236.6)
     return [f"{amount} {unit.capitalize()}", f"{grams:.1f} Grams", f"{grams/28.35:.1f} Ounces"]
 
+@st.cache_data(show_spinner=False)
 def fetch_and_parse(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:]
         
-        prompt = f"""Convert to JSON with this structure: 
-        {{"preheat": "350F", "steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [ {{"name": "...", "amount": 0.0, "unit": "..."}} ] }} ] }}. 
+        prompt = f"""Convert to JSON: {{"preheat": "350F", "steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [ {{"name": "...", "amount": 0.0, "unit": "..."}} ] }} ] }}. 
         If no timer, set timer_minutes to 0. Source: {text[:1500]}"""
         
         model = genai.GenerativeModel("gemini-3.5-flash")
@@ -48,28 +47,22 @@ def fetch_and_parse(url):
         raw['steps'] = final_steps
         return raw
     except Exception as e:
-        st.error(f"Error: {e}")
-        return None
+        return {"error": str(e)}
 
 # --- UI ---
 st.title("Interactive AI Kitchen")
+url = st.text_input("Paste Recipe URL:")
 
-# Only show input if no data is loaded
-if st.session_state.recipe_data is None:
-    url = st.text_input("Paste Recipe URL:")
-    if st.button("Start Cooking"):
-        with st.spinner("Parsing recipe..."):
-            st.session_state.recipe_data = fetch_and_parse(url)
+if st.button("Start Cooking"):
+    with st.spinner("Parsing recipe..."):
+        data = fetch_and_parse(url)
+        if "error" in data: st.error(data["error"])
+        else:
+            st.session_state.recipe_data = data
             st.session_state.current_step = 0
             st.rerun()
-else:
-    # Sidebar for control
-    if st.sidebar.button("Clear / New Recipe"):
-        st.session_state.recipe_data = None
-        st.session_state.current_step = 0
-        st.rerun()
 
-    # Recipe Display
+if st.session_state.recipe_data:
     recipe = st.session_state.recipe_data
     if st.session_state.current_step == 0 and recipe.get("preheat"):
         st.warning(f"🔥 Preheat oven to: {recipe['preheat']}")
