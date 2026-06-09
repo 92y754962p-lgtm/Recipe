@@ -1,61 +1,49 @@
 import streamlit as st
 from recipe_scrapers import scrape_me
+import google.generativeai as genai
+import json
 
-# --- Initialize State ---
 if "recipe" not in st.session_state: st.session_state.recipe = None
 if "step" not in st.session_state: st.session_state.step = 0
 
 st.title("Interactive Kitchen")
 
-# --- Fetching ---
-url = st.text_input("Paste Recipe URL:")
-if st.button("Fetch and Build"):
-    try:
-        scraper = scrape_me(url)
-        st.session_state.recipe = {
-            "title": scraper.title(),
-            "ingredients": scraper.ingredients(),
-            "instructions": scraper.instructions_list()
-        }
-        st.session_state.step = 0
-        st.rerun()
-    except Exception as e:
-        st.error(f"Scraper error: {e}")
+url = st.text_input("URL:")
+if st.button("Fetch"):
+    scraper = scrape_me(url)
+    model = genai.GenerativeModel("gemini-3.5-flash")
+    
+    # Map ingredients to steps and generate conversions
+    prompt = f"""
+    Map these ingredients to these instructions. 
+    Ingredients: {json.dumps(scraper.ingredients())}
+    Instructions: {json.dumps(scraper.instructions_list())}
+    
+    For each step, identify ONLY the ingredients used in that step. 
+    Provide 3 conversion options for each ingredient (e.g., ['700g', '25oz', '1.5lbs']).
+    Return JSON: {{"steps": [{{"text": "...", "ingredients": [{{"name": "...", "conversions": ["700g", "25oz"]}}]}}]}}
+    """
+    res = model.generate_content(prompt)
+    data = json.loads(res.text.replace("```json", "").replace("```", ""))
+    
+    st.session_state.recipe = {"title": scraper.title(), "all_ing": scraper.ingredients(), **data}
+    st.session_state.step = 0
+    st.rerun()
 
-# --- Display Section ---
 if st.session_state.recipe:
     r = st.session_state.recipe
-    
-    # 1. Sidebar (Master Ingredient List)
     with st.sidebar:
-        st.header("Ingredients")
-        for ing in r["ingredients"]:
-            st.write(f"• {ing}")
-        if st.button("Clear / New Recipe"):
-            st.session_state.recipe = None
-            st.rerun()
-
-    # 2. Main Step Display (Untouched text)
-    st.subheader(r["title"])
-    st.caption(f"Step {st.session_state.step + 1} of {len(r['instructions'])}")
+        st.header("Master Ingredients")
+        for ing in r["all_ing"]: st.write(f"• {ing}")
     
-    # Raw Step Text (No LLM)
-    step_text = r["instructions"][st.session_state.step]
-    st.info(step_text)
+    step_data = r["steps"][st.session_state.step]
+    st.info(step_data["text"])
     
-    # 3. Interactive Row for each Ingredient
-    # Note: We display all ingredients in the sidebar; 
-    # for the interactive row, we show them here as requested.
-    st.write("---")
-    st.subheader("Items in this step:")
-    for ing in r["ingredients"]:
-        c1, c2 = st.columns([0.7, 0.3])
-        c1.checkbox(ing)
-        c2.selectbox("Unit", ["Original", "Metric", "Imperial"], key=f"sel_{ing}", label_visibility="collapsed")
-    
-    # 4. Navigation
-    c1, c2, c3 = st.columns([1, 4, 1])
-    if c1.button("Back") and st.session_state.step > 0:
-        st.session_state.step -= 1; st.rerun()
-    if c3.button("Next") and st.session_state.step < len(r["instructions"])-1:
-        st.session_state.step += 1; st.rerun()
+    for ing in step_data["ingredients"]:
+        c1, c2 = st.columns([0.6, 0.4])
+        c1.checkbox(ing["name"])
+        c2.selectbox("Amount", ing["conversions"], key=f"sel_{ing['name']}", label_visibility="collapsed")
+        
+    c1, c2 = st.columns(2)
+    if c1.button("Back") and st.session_state.step > 0: st.session_state.step -= 1; st.rerun()
+    if c2.button("Next") and st.session_state.step < len(r["steps"])-1: st.session_state.step += 1; st.rerun()
