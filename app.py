@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
@@ -13,7 +12,7 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
-def fetch_and_parse(url):
+def get_recipe(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
@@ -34,27 +33,17 @@ def fetch_and_parse(url):
 # --- UI ---
 st.title("Interactive AI Kitchen")
 
-js_paste = """
-<button id="pasteBtn" style="width:100%; padding: 10px; background-color: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer;">📋 Paste URL & Start Cooking</button>
-<script>
-    const btn = document.getElementById('pasteBtn');
-    btn.onclick = async () => {
-        const text = await navigator.clipboard.readText();
-        window.parent.postMessage({type: 'streamlit:setComponentValue', value: text}, '*');
-    };
-</script>
-"""
-
 if st.session_state.recipe_data is None:
-    val = components.html(js_paste, height=60)
-    url = st.text_input("Or paste manually:", key="url_in")
-    target_url = val if val and isinstance(val, str) else url
-    
-    if target_url: 
-        with st.spinner("Parsing..."):
-            st.session_state.recipe_data = fetch_and_parse(target_url)
-            st.session_state.current_step = 0
-            st.rerun()
+    url = st.text_input("Paste Recipe URL:")
+    if st.button("Go"):
+        with st.spinner("Loading recipe..."):
+            result = get_recipe(url)
+            if "error" in result:
+                st.error(f"Could not load recipe: {result['error']}")
+            else:
+                st.session_state.recipe_data = result
+                st.session_state.current_step = 0
+                st.rerun()
 else:
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
@@ -63,12 +52,10 @@ else:
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
     
-    # CRITICAL FIX: Check if steps exist before accessing
+    # Safety Check
     if not steps:
-        st.error("No steps found. Please try a different URL.")
-        if st.button("Retry"): 
-            st.session_state.recipe_data = None
-            st.rerun()
+        st.error("No recipe steps found.")
+        if st.button("Back"): st.session_state.recipe_data = None; st.rerun()
     else:
         if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
         
