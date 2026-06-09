@@ -60,21 +60,18 @@ if st.session_state.recipe_data is None:
     url = col1.text_input("Paste Recipe URL:")
     servings = col2.number_input("Servings:", min_value=1, value=2, step=1)
     
-    # Centered and enlarged 'Go' button
-    st.write("") # Small spacer
+    st.write("") 
     col_l, col_center, col_r = st.columns([1, 2, 1])
     with col_center:
-        go_pressed = st.button("Go", type="primary", use_container_width=True)
-    
-    if go_pressed:
-        with st.spinner("Loading..."):
-            result = get_recipe(url, servings)
-            if "error" in result:
-                st.error(f"Error: {result['error']}")
-            else:
-                st.session_state.recipe_data = result
-                st.session_state.current_step = 0
-                st.rerun()
+        if st.button("Go", type="primary", use_container_width=True):
+            with st.spinner("Loading..."):
+                result = get_recipe(url, servings)
+                if "error" in result:
+                    st.error(f"Error: {result['error']}")
+                else:
+                    st.session_state.recipe_data = result
+                    st.session_state.current_step = 0
+                    st.rerun()
 else:
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
@@ -107,15 +104,20 @@ else:
                 label_visibility="collapsed"
             )
         
-        # Spacer column pushes Next/Back buttons to the right
-        col_space, col_back, col_next = st.columns([0.7, 0.15, 0.15])
+        st.write("") 
         
+        # 6:1:1 ratio with an explicit st.empty() prevents column collapse
+        col_space, col_back, col_next = st.columns([6, 1, 1])
+        
+        with col_space:
+            st.empty() 
+            
         with col_back:
-            if st.button("Back") and st.session_state.current_step > 0:
+            if st.button("Back", use_container_width=True) and st.session_state.current_step > 0:
                 st.session_state.current_step -= 1
                 st.rerun()
                 
         with col_next:
-            if st.button("Next") and st.session_state.current_step < len(steps)-1:
+            if st.button("Next", use_container_width=True) and st.session_state.current_step < len(steps)-1:
                 st.session_state.current_step += 1
                 st.rerun()
