@@ -34,7 +34,6 @@ def fetch_and_parse(url):
 # --- UI ---
 st.title("Interactive AI Kitchen")
 
-# Clipboard Paste Logic
 js_paste = """
 <button id="pasteBtn" style="width:100%; padding: 10px; background-color: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer;">📋 Paste URL & Start Cooking</button>
 <script>
@@ -47,17 +46,13 @@ js_paste = """
 """
 
 if st.session_state.recipe_data is None:
-    val = components.html(js_paste, height=50)
-    if val:
-        with st.spinner("Parsing..."):
-            st.session_state.recipe_data = fetch_and_parse(val)
-            st.session_state.current_step = 0
-            st.rerun()
-
+    val = components.html(js_paste, height=60)
     url = st.text_input("Or paste manually:", key="url_in")
-    if url: 
+    target_url = val if val and isinstance(val, str) else url
+    
+    if target_url: 
         with st.spinner("Parsing..."):
-            st.session_state.recipe_data = fetch_and_parse(url)
+            st.session_state.recipe_data = fetch_and_parse(target_url)
             st.session_state.current_step = 0
             st.rerun()
 else:
@@ -68,22 +63,29 @@ else:
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
     
-    if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
-    
-    step = steps[st.session_state.current_step]
-    
-    st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
-    st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
-    st.info(step.get('description', ''))
-    
-    if step.get('timer_minutes', 0) > 0:
-        st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
-    
-    for i, ing in enumerate(step.get('ingredients', [])):
-        st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})")
-    
-    c1, c2 = st.columns(2)
-    if c1.button("Back") and st.session_state.current_step > 0:
-        st.session_state.current_step -= 1; st.rerun()
-    if c2.button("Next") and st.session_state.current_step < len(steps)-1:
-        st.session_state.current_step += 1; st.rerun()
+    # CRITICAL FIX: Check if steps exist before accessing
+    if not steps:
+        st.error("No steps found. Please try a different URL.")
+        if st.button("Retry"): 
+            st.session_state.recipe_data = None
+            st.rerun()
+    else:
+        if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
+        
+        step = steps[st.session_state.current_step]
+        
+        st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
+        st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
+        st.info(step.get('description', ''))
+        
+        if step.get('timer_minutes', 0) > 0:
+            st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
+        
+        for i, ing in enumerate(step.get('ingredients', [])):
+            st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})")
+        
+        c1, c2 = st.columns(2)
+        if c1.button("Back") and st.session_state.current_step > 0:
+            st.session_state.current_step -= 1; st.rerun()
+        if c2.button("Next") and st.session_state.current_step < len(steps)-1:
+            st.session_state.current_step += 1; st.rerun()
