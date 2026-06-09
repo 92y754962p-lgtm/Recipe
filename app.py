@@ -1,71 +1,57 @@
 import streamlit as st
 import json
-from recipe_scrapers import scrape_me
+import requests
+from bs4 import BeautifulSoup
 import google.generativeai as genai
 
 # --- Config ---
-if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
-if "current_step" not in st.session_state: st.session_state.current_step = 0
-
-# --- Engine ---
-def prepare_recipe_structure(scraper):
-    model = genai.GenerativeModel("gemini-3.5-flash")
-    prompt = f"""
-    Organize this recipe into a structured JSON format. 
-    Keep instructions exactly as provided by the scraper (verbatim).
-    Map ingredients to the steps they are used in.
+def extract_schema_recipe(url):
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+    soup = BeautifulSoup(response.text, "html.parser")
     
-    Recipe Title: {scraper.title()}
-    Ingredients: {json.dumps(scraper.ingredients())}
-    Instructions: {json.dumps(scraper.instructions_list())}
-    
-    Return JSON: 
-    {{"steps": [ {{"text": "instruction text", "ingredients": ["ingredient A", "ingredient B"]}} ]}}
-    """
-    res = model.generate_content(prompt)
-    return json.loads(res.text.replace("```json", "").replace("```", ""))
+    # Locate the JSON-LD script block containing 'recipeIngredient'
+    scripts = soup.find_all('script', type='application/ld+json')
+    for script in scripts:
+        data = json.loads(script.string)
+        # Handle cases where it's a list of schemas or a single dict
+        if isinstance(data, list):
+            for item in data:
+                if item.get('@type') == 'Recipe': return item
+        elif data.get('@type') == 'Recipe':
+            return data
+    return None
 
 # --- UI ---
-st.title("Interactive AI Kitchen")
+st.title("Interactive Kitchen")
 
-# Stage 1: Fetch
-url = st.text_input("Recipe URL:")
-if st.button("Fetch and Build Recipe"):
-    with st.spinner("Building structure..."):
-        try:
-            scraper = scrape_me(url)
-            # Gather everything first
-            st.session_state.recipe_data = prepare_recipe_structure(scraper)
-            st.session_state.base_servings = 2 # Most sites default to 2
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error: {e}")
+url = st.text_input("URL:")
+if st.button("Fetch"):
+    recipe = extract_schema_recipe(url)
+    if recipe:
+        st.session_state.recipe = {
+            "title": recipe.get("name"),
+            "ingredients": recipe.get("recipeIngredient"),
+            "instructions": [step['text'] if isinstance(step, dict) else step 
+                           for step in recipe.get("recipeInstructions", [])]
+        }
+        st.session_state.step = 0
+        st.rerun()
+    else:
+        st.error("Could not find schema data on this page.")
 
-# Stage 2: Scaling & Display
-if st.session_state.recipe_data:
-    st.divider()
-    # Now introduce the math
-    servings = st.number_input("Servings:", min_value=1, value=st.session_state.base_servings)
-    factor = servings / st.session_state.base_servings
+if "recipe" in st.session_state:
+    r = st.session_state.recipe
     
-    # Sidebar
+    # Sidebar: Raw ingredients from database (100% accurate)
     with st.sidebar:
-        st.header("Ingredients")
-        # Here you could add a function to multiply ingredient strings if needed
-        st.write(f"Multiplier: {factor}x")
+        st.header(r["title"])
+        for ing in r["ingredients"]:
+            st.write(f"• {ing}")
+            
+    # Main: Instructions (Untouched raw text)
+    st.info(r["instructions"][st.session_state.step])
     
-    # Display Directions
-    step = st.session_state.recipe_data["steps"][st.session_state.current_step]
-    st.info(step["text"])
-    
-    for ing in step["ingredients"]:
-        c1, c2 = st.columns([0.7, 0.3])
-        c1.checkbox(ing)
-        c2.selectbox("Unit", ["Original", "Metric"], key=f"sel_{ing}")
-        
-    # Nav
-    if st.button("Next") and st.session_state.current_step < len(st.session_state.recipe_data["steps"])-1:
-        st.session_state.current_step += 1; st.rerun()
+    if st.button("Next") and st.session_state.step < len(r["instructions"])-1:
+        st.session_state.step += 1; st.rerun()
