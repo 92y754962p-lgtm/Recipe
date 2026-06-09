@@ -31,19 +31,21 @@ def fetch_and_parse_recipe(url):
         Analyze the following recipe web page text and convert it into a structured JSON object.
         
         CRITICAL DIRECTIVES:
-        1. Cross-reference generic terms (e.g., "dry ingredients", "the vegetables") with the master ingredient list. Explicitly list the exact ingredients and their measurements directly in the step text so the user never has to look elsewhere.
-        2. For EVERY measurement, calculate and provide at least three unit variations: Original, Metric (grams/ml), and Imperial (ounces/cups/lbs).
+        1. Break down steps by the specific vessel/bowl being used. 
+        2. Do not use paragraph format for ingredients. Extract every ingredient mentioned in the step and list them individually.
+        3. Cross-reference generic terms (e.g., "dry ingredients") with the master ingredient list. Explicitly list the exact ingredients and their measurements.
+        4. For EVERY ingredient measurement, calculate and provide at least three unit variations in an array: Original, Metric (grams/ml), and Imperial (ounces/cups/lbs).
         
         JSON Schema Requirements:
         1. "title": String name of recipe.
         2. "steps": List of object steps containing:
             - "step_number": Integer
-            - "text": String instruction replacing all vague terms with explicit ingredients and quantities.
+            - "action_header": String (e.g., "Whisk Dry Ingredients (Medium Bowl)")
+            - "description": String (Brief 1-2 sentence instruction of what to do with the items).
             - "timer_minutes": Integer (cooking duration, 0 if none).
-            - "ingredients_in_step": List of specific strings for individual ingredients used in this step.
-            - "measurements": List of objects for each measurement found in the step text:
-                - "label": String name of specific ingredient being measured.
-                - "options": List of strings containing converted values (e.g., ["1 cup", "120 grams", "4.2 oz"]).
+            - "ingredients": List of objects for each item used in this step:
+                - "name": String (e.g., "Flour")
+                - "options": List of strings containing converted values (e.g., ["1.5 Cups", "180 Grams", "6.3 Ounces"])
         
         Recipe Source Text:
         {text_content[:8000]}
@@ -93,36 +95,37 @@ if st.session_state.recipe_data:
     
     if idx < len(steps):
         step = steps[idx]
-        st.info(step.get("text", ""))
         
-        # Inline Measurement Unit Toggles
-        measurements = step.get("measurements", [])
-        if measurements:
-            st.write("**Unit Conversions:**")
-            cols = st.columns(len(measurements))
-            for i, meas in enumerate(measurements):
-                with cols[i % len(cols)]:
+        # Display the Vessel/Action Header and Description
+        st.markdown(f"### 🥣 {step.get('action_header', 'Action Needed')}")
+        st.info(step.get("description", ""))
+        
+        # Display Ingredients with Inline Unit Toggles
+        ingredients = step.get("ingredients", [])
+        if ingredients:
+            st.write("**Ingredients:**")
+            for i, ing in enumerate(ingredients):
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    # Checkbox for the ingredient name
+                    st.checkbox(f"**{ing.get('name', 'Ingredient')}**", key=f"check_{idx}_{i}")
+                with col2:
+                    # Dropdown acting as the inline amount display
+                    options = ing.get("options", ["Amount not specified"])
                     st.selectbox(
-                        label=meas.get("label", f"Unit {i+1}"),
-                        options=meas.get("options", []),
-                        key=f"meas_{idx}_{i}"
+                        label=f"Amount for {ing.get('name')}", 
+                        options=options, 
+                        key=f"amount_{idx}_{i}",
+                        label_visibility="collapsed"
                     )
-        
-        # Step Ingredient Multi-Checklist
-        ingredients = step.get("ingredients_in_step", [])
-        if len(ingredients) > 1:
-            st.write("**Ingredient Tracker:**")
-            for ing in ingredients:
-                st.checkbox(ing, key=f"check_{idx}_{ing}")
-        elif len(ingredients) == 1:
-            st.write(f"**Ingredient Active:** {ingredients[0]}")
             
         # Contextual Step Timer
         timer_mins = step.get("timer_minutes", 0)
         if timer_mins > 0:
+            st.write("---")
             st.write("**Active Step Timer:**")
             timer_display = st.empty()
-            if st.button("Start Countdown", key=f"timer_start_{idx}"):
+            if st.button(f"Start Countdown ({timer_mins} mins)", key=f"timer_start_{idx}"):
                 total_seconds = timer_mins * 60
                 while total_seconds > 0:
                     m, s = divmod(total_seconds, 60)
