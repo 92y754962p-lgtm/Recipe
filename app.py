@@ -22,17 +22,17 @@ def get_recipe(url):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
         
-        # Strict prompt to force structured ingredient JSON
+        # Force strict JSON structure with distinct name, amount, and unit keys
         prompt = f"""
         Extract the recipe into this exact JSON format. 
-        Do not return anything else.
+        Each ingredient MUST have a non-empty name, an amount, and a unit.
         {{
           "steps": [
             {{
               "action_header": "Title",
               "description": "Short instruction",
               "timer_minutes": 0,
-              "ingredients": [ {{"name": "ingredient_name", "amount": 0, "unit": "unit"}} ]
+              "ingredients": [ {{"name": "ingredient name", "amount": 0, "unit": "unit"}} ]
             }}
           ]
         }}
@@ -80,16 +80,19 @@ else:
         if step.get('timer_minutes', 0) > 0:
             st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
         
-        # Restoration of the checkbox + dropdown UI
         st.subheader("Ingredients")
         for ing in step.get('ingredients', []):
+            # Explicitly force the name to display in the checkbox, and amount/unit in the selectbox
+            ing_name = ing.get('name', 'Ingredient')
+            ing_val = f"{ing.get('amount', 0)} {ing.get('unit', '')}"
+            
             col1, col2 = st.columns([0.1, 0.9])
-            col1.checkbox("", key=f"check_{ing.get('name')}")
+            col1.checkbox("", key=f"check_{ing_name}")
             col2.selectbox(
-                label=ing.get('name', 'Ingredient'),
-                options=[f"{ing.get('amount', 0)} {ing.get('unit', '')}"],
-                key=f"select_{ing.get('name')}",
-                label_visibility="collapsed"
+                label=ing_name,
+                options=[ing_val],
+                key=f"select_{ing_name}",
+                label_visibility="visible" # Label is now visible to show the ingredient name
             )
         
         c1, c2 = st.columns(2)
