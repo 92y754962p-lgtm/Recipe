@@ -7,70 +7,65 @@ import google.generativeai as genai
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Initialize State
-if "raw_data" not in st.session_state: st.session_state.raw_data = None
+if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
-# --- Scaling Logic ---
-def scale_ingredients(ingredients, factor):
+# --- Engine ---
+def prepare_recipe_structure(scraper):
     model = genai.GenerativeModel("gemini-3.5-flash")
     prompt = f"""
-    Scale these ingredients by a factor of {factor}.
-    For each ingredient, provide the name and a list of alternative units (e.g. ['700g', '1.5 lbs']).
-    Return JSON: {{"ingredients": [{{"name": "Ingredient Name", "units": ["700g", "1.5 lbs"]}}]}}
-    Ingredients: {json.dumps(ingredients)}
+    Organize this recipe into a structured JSON format. 
+    Keep instructions exactly as provided by the scraper (verbatim).
+    Map ingredients to the steps they are used in.
+    
+    Recipe Title: {scraper.title()}
+    Ingredients: {json.dumps(scraper.ingredients())}
+    Instructions: {json.dumps(scraper.instructions_list())}
+    
+    Return JSON: 
+    {{"steps": [ {{"text": "instruction text", "ingredients": ["ingredient A", "ingredient B"]}} ]}}
     """
     res = model.generate_content(prompt)
-    raw = res.text.replace("```json", "").replace("```", "")
-    return json.loads(raw).get("ingredients", [])
+    return json.loads(res.text.replace("```json", "").replace("```", ""))
 
 # --- UI ---
 st.title("Interactive AI Kitchen")
 
-# 1. Fetching
-col1, col2 = st.columns([0.8, 0.2])
-url = col1.text_input("Recipe URL:")
-if col2.button("Fetch"):
-    try:
-        scraper = scrape_me(url)
-        st.session_state.raw_data = {
-            "title": scraper.title(),
-            "ingredients": scraper.ingredients(),
-            "instructions": scraper.instructions_list(),
-            "servings": 2 # Default fallback
-        }
-        st.session_state.current_step = 0
-        st.rerun()
-    except Exception as e:
-        st.error(f"Error: {e}")
+# Stage 1: Fetch
+url = st.text_input("Recipe URL:")
+if st.button("Fetch and Build Recipe"):
+    with st.spinner("Building structure..."):
+        try:
+            scraper = scrape_me(url)
+            # Gather everything first
+            st.session_state.recipe_data = prepare_recipe_structure(scraper)
+            st.session_state.base_servings = 2 # Most sites default to 2
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-# 2. Display
-if st.session_state.raw_data:
+# Stage 2: Scaling & Display
+if st.session_state.recipe_data:
     st.divider()
-    # Scaling
-    servings = st.number_input("Servings:", value=st.session_state.raw_data["servings"])
-    factor = servings / st.session_state.raw_data["servings"]
-    scaled = scale_ingredients(st.session_state.raw_data["ingredients"], factor)
+    # Now introduce the math
+    servings = st.number_input("Servings:", min_value=1, value=st.session_state.base_servings)
+    factor = servings / st.session_state.base_servings
     
-    # Sidebar: Ingredients
+    # Sidebar
     with st.sidebar:
         st.header("Ingredients")
-        for ing in scaled:
-            st.write(f"• {ing['name']}")
+        # Here you could add a function to multiply ingredient strings if needed
+        st.write(f"Multiplier: {factor}x")
     
-    # Main: Directions (Raw text, no LLM interference)
-    instructions = st.session_state.raw_data["instructions"]
-    st.info(instructions[st.session_state.current_step])
+    # Display Directions
+    step = st.session_state.recipe_data["steps"][st.session_state.current_step]
+    st.info(step["text"])
     
-    # Checkbox + Unit Selection (for ingredients in current step)
-    for j, ing in enumerate(scaled):
+    for ing in step["ingredients"]:
         c1, c2 = st.columns([0.7, 0.3])
-        c1.checkbox(ing["name"], key=f"ch_{j}")
-        c2.selectbox("Unit", ing["units"], key=f"sl_{j}", label_visibility="collapsed")
+        c1.checkbox(ing)
+        c2.selectbox("Unit", ["Original", "Metric"], key=f"sel_{ing}")
         
-    # Navigation
-    c1, c2, c3 = st.columns([1, 4, 1])
-    if c1.button("Back") and st.session_state.current_step > 0:
-        st.session_state.current_step -= 1; st.rerun()
-    if c3.button("Next") and st.session_state.current_step < len(instructions)-1:
+    # Nav
+    if st.button("Next") and st.session_state.current_step < len(st.session_state.recipe_data["steps"])-1:
         st.session_state.current_step += 1; st.rerun()
