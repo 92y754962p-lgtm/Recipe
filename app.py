@@ -22,17 +22,21 @@ def get_recipe(url):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
         
-        # Force strict JSON structure with distinct name, amount, and unit keys
         prompt = f"""
         Extract the recipe into this exact JSON format. 
-        Each ingredient MUST have a non-empty name, an amount, and a unit.
+        For every ingredient, calculate and provide the amount in both metric and imperial units as a list of strings in the 'amount_options' array.
         {{
           "steps": [
             {{
               "action_header": "Title",
               "description": "Short instruction",
               "timer_minutes": 0,
-              "ingredients": [ {{"name": "ingredient name", "amount": 0, "unit": "unit"}} ]
+              "ingredients": [ 
+                {{
+                    "name": "ingredient name", 
+                    "amount_options": ["500 g", "1.1 lbs", "17.6 oz"] 
+                }} 
+              ]
             }}
           ]
         }}
@@ -80,19 +84,17 @@ else:
         if step.get('timer_minutes', 0) > 0:
             st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
         
-        st.subheader("Ingredients")
-        for ing in step.get('ingredients', []):
-            # Explicitly force the name to display in the checkbox, and amount/unit in the selectbox
+        for i, ing in enumerate(step.get('ingredients', [])):
             ing_name = ing.get('name', 'Ingredient')
-            ing_val = f"{ing.get('amount', 0)} {ing.get('unit', '')}"
+            options = ing.get('amount_options', ["Amount not specified"])
             
-            col1, col2 = st.columns([0.1, 0.9])
-            col1.checkbox("", key=f"check_{ing_name}")
-            col2.selectbox(
-                label=ing_name,
-                options=[ing_val],
-                key=f"select_{ing_name}",
-                label_visibility="visible" # Label is now visible to show the ingredient name
+            st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
+            
+            st.selectbox(
+                label=f"amount_{st.session_state.current_step}_{i}",
+                options=options,
+                key=f"select_{st.session_state.current_step}_{i}",
+                label_visibility="collapsed"
             )
         
         c1, c2 = st.columns(2)
