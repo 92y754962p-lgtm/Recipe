@@ -47,11 +47,22 @@ def fetch_and_parse_recipe(url):
         Return ONLY raw valid JSON matching the schema. No markdown wrapping blocks.
         """
         
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
+        model = genai.GenerativeModel("gemini-3.5-flash")
         
-        cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-        return json.loads(cleaned_text)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt)
+                cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
+                return json.loads(cleaned_text)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2) # 2-second delay before retrying
+                    continue
+                else:
+                    st.error(f"API Error after {max_retries} attempts: {e}")
+                    return None
+                    
     except Exception as e:
         st.error(f"Failed to process URL content: {e}")
         return None
