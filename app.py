@@ -13,7 +13,6 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
-@st.cache_data(show_spinner=False)
 def fetch_and_parse(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -69,9 +68,7 @@ else:
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
     
-    # Safety Index Check
-    if st.session_state.current_step >= len(steps):
-        st.session_state.current_step = 0
+    if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
     
     step = steps[st.session_state.current_step]
     
