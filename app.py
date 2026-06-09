@@ -38,12 +38,10 @@ def process_steps_atomically(recipe_data):
     new_steps = []
     for step in recipe_data.get('steps', []):
         desc = step.get('description', '')
-        # Split by sentence to force atomic steps
         sentences = [s.strip() for s in desc.replace(';', '.').split('.') if s.strip()]
         for i, sub_desc in enumerate(sentences):
             new_step = step.copy()
             new_step['description'] = sub_desc
-            # Only associate ingredients with the first sub-step to avoid repetition
             if i > 0: new_step['ingredients'] = []
             new_steps.append(new_step)
     return new_steps
@@ -53,17 +51,13 @@ def fetch_and_parse_recipe(url):
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Scrape Schema
-        recipe_schema = None
-        for script in soup.find_all("script", type="application/ld+json"):
-            try:
-                data = json.loads(script.string)
-                if isinstance(data, dict) and data.get("@type") == "Recipe": recipe_schema = data
-            except: continue
+        # Aggressive filtering: Only grab likely instruction/ingredient tags
+        recipe_text = ""
+        for tag in soup.find_all(['h1', 'h2', 'li', 'p']):
+            text = tag.get_text().strip()
+            if len(text) > 10: recipe_text += text + "\n"
         
-        text_content = json.dumps(recipe_schema) if recipe_schema else " ".join([p.get_text() for p in soup.find_all(["p", "li"])])
-        
-        prompt = f"Convert this recipe into JSON with title and steps (each containing action_header, description, ingredients list with name, amount, unit). No extra commentary. Source: {text_content[:4000]}"
+        prompt = f"Convert this to JSON (title, steps: action_header, description, ingredients: name, amount, unit). No commentary. Source: {recipe_text[:1500]}"
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         response = model.generate_content(prompt)
@@ -72,7 +66,7 @@ def fetch_and_parse_recipe(url):
         raw_recipe['steps'] = process_steps_atomically(raw_recipe)
         return raw_recipe
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Processing Error: {e}")
         return None
 
 if st.button("Process Recipe"):
@@ -87,8 +81,7 @@ if st.session_state.recipe_data:
     recipe = st.session_state.recipe_data
     step = recipe['steps'][st.session_state.current_step]
     
-    progress_val = (st.session_state.current_step + 1) / len(recipe['steps'])
-    st.progress(progress_val)
+    st.progress((st.session_state.current_step + 1) / len(recipe['steps']))
     st.caption(f"Step {st.session_state.current_step + 1} of {len(recipe['steps'])}")
     
     st.markdown(f"### 🥣 {step['action_header']}")
