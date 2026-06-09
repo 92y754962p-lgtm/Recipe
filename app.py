@@ -33,7 +33,7 @@ INGREDIENT_DENSITIES = {
     "almond milk": 240.0,
     "oil": 218.0,
     "vegetable oil": 218.0,
-    "salt": 300.0,  # 1 cup of salt is roughly 300g (though usually measured in tsp)
+    "salt": 300.0,  
     "baking powder": 240.0,
     "baking soda": 288.0,
 }
@@ -52,6 +52,8 @@ def convert_units(amount, unit, ingredient_name):
         base_cups = amount / 48.0
     elif unit in ["fluid ounce", "fluid ounces", "fl oz"]:
         base_cups = amount / 8.0
+    elif unit in ["batch", "bowl", "mixture", "part"]:
+        return [f"{amount} {unit.capitalize()}"]
     else:
         # Fallback if unit is already a weight or unhandled
         if unit in ["gram", "grams", "g"]:
@@ -61,13 +63,13 @@ def convert_units(amount, unit, ingredient_name):
         return [f"{amount} {unit}"]
 
     # Determine density factors
-    density = INGREDIENT_DENSITIES.get(normalized_ing, 236.6) # Default to water density
+    density = INGREDIENT_DENSITIES.get(normalized_ing, 236.6) 
     
     grams = base_cups * density
     ounces = grams / 28.35
     
     # Generate cleaner strings depending on scale
-    options = [f"{amount} {unit}"]
+    options = [f"{amount} {unit.capitalize()}"]
     if grams >= 1:
         options.append(f"{grams:.1f} Grams")
     if ounces >= 0.05:
@@ -80,15 +82,40 @@ def fetch_and_parse_recipe(url):
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
-        text_content = " ".join([p.get_text() for p in soup.find_all(["p", "li", "h1", "h2", "h3"])])
+        
+        # Look for JSON-LD first to skip the blog entirely
+        recipe_schema = None
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(script.string)
+                # Handle cases where schema is wrapped in a graph array
+                if isinstance(data, dict) and "@graph" in data:
+                    for item in data["@graph"]:
+                        if item.get("@type") == "Recipe" or (isinstance(item.get("@type"), list) and "Recipe" in item["@type"]):
+                            recipe_schema = item
+                            break
+                elif isinstance(data, dict) and data.get("@type") == "Recipe":
+                    recipe_schema = data
+                elif isinstance(data, list):
+                    for item in data:
+                        if item.get("@type") == "Recipe":
+                            recipe_schema = item
+                            break
+            except Exception:
+                continue
+                
+        if recipe_schema:
+            text_content = json.dumps(recipe_schema)
+        else:
+            text_content = " ".join([p.get_text() for p in soup.find_all(["p", "li", "h1", "h2", "h3"])])
         
         prompt = f"""
-        Analyze the following recipe web page text and convert it into a structured JSON object.
+        Analyze the following recipe web page text/schema and convert it into a structured JSON object.
         
         CRITICAL DIRECTIVES:
         1. Break down steps by the specific vessel/bowl being used. 
-        2. Do not use paragraph format for ingredients. Extract every ingredient mentioned in the step and list them individually.
-        3. Cross-reference generic terms (e.g., "dry ingredients") with the master ingredient list. Explicitly list the exact ingredients and their measurements.
+        2. Do not use paragraph format for ingredients. Extract ingredients and list them individually.
+        3. MIXTURE RULE (CRITICAL): If a step introduces NEW ingredients, list them individually with quantities. If a step combines previously made mixtures (e.g., "add wet ingredients to dry bowl" or "fold in the dough"), treat the mixture itself as a single ingredient item (e.g., "Wet Mixture" or "Dough") with an amount of 1 and unit of "Batch". DO NOT relist individual raw ingredients that were already tracked in previous steps.
         4. Isolate the numerical quantity and unit name into separate fields. Do not perform math conversions here.
         
         JSON Schema Requirements:
@@ -96,12 +123,12 @@ def fetch_and_parse_recipe(url):
         2. "steps": List of object steps containing:
             - "step_number": Integer
             - "action_header": String (e.g., "Whisk Dry Ingredients (Medium Bowl)")
-            - "description": String (Brief 1-2 sentence instruction of what to do with the items).
+            - "description": String (Brief 1-2 sentence instruction of what to do).
             - "timer_minutes": Integer (cooking duration, 0 if none).
             - "ingredients": List of objects for each item used in this step:
-                - "name": String (e.g., "Flour")
+                - "name": String (e.g., "Flour" or "Wet Mixture")
                 - "amount": Float (The numerical value only, e.g., 1.5)
-                - "unit": String (The unit label only, e.g., "Cups")
+                - "unit": String (The unit label only, e.g., "Cups" or "Batch")
         
         Recipe Source Text:
         {text_content[:8000]}
@@ -159,7 +186,7 @@ if st.session_state.recipe_data:
         # Display Ingredients with Inline Unit Toggles calculated via Python
         ingredients = step.get("ingredients", [])
         if ingredients:
-            st.write("**Ingredients:**")
+            st.write("**Ingredients/Components:**")
             for i, ing in enumerate(ingredients):
                 col1, col2 = st.columns([1, 2])
                 with col1:
