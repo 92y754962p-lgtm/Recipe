@@ -4,9 +4,14 @@ import requests
 from bs4 import BeautifulSoup
 import json
 
+# --- Config ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
+if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
+if "current_step" not in st.session_state: st.session_state.current_step = 0
+
+# --- Logic ---
 def get_recipe(url, target_servings):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -16,41 +21,54 @@ def get_recipe(url, target_servings):
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         
-        # PASS 1: Extract the "Ground Truth" dictionary
-        prompt1 = f"Extract a JSON dictionary of ALL ingredients and their exact amounts from this text: {text[:8000]}"
-        res1 = model.generate_content(prompt1)
-        ground_truth = json.loads(res1.text.replace("```json", "").replace("```", ""))
+        # Pass 1: Extraction
+        p1 = f"Extract a JSON dictionary of all ingredients and their exact amounts from: {text[:8000]}"
+        r1 = model.generate_content(p1)
+        gt = json.loads(r1.text.replace("```json", "").replace("```", ""))
         
-        # PASS 2: Write steps using ONLY the ground truth
-        prompt2 = f"""
-        Using ONLY this ingredient list: {json.dumps(ground_truth)}
-        Write the recipe steps for {target_servings} servings.
-        For every ingredient in a step, replace the ingredient name with the measurement from the list. 
-        Return JSON: {{"steps": [{{"title": "...", "text": "...", "items": ["700g chicken"]}}]}}
-        Text: {text[:8000]}
-        """
-        res2 = model.generate_content(prompt2)
-        return json.loads(res2.text.replace("```json", "").replace("```", ""))
-        
+        # Pass 2: Mapping
+        p2 = f"""Using ONLY this ingredient list: {json.dumps(gt)}
+        Write steps for {target_servings} servings. 
+        For every ingredient in a step, replace the name with the value from the list.
+        Return JSON: {{"steps": [{{"title": "Step", "text": "Instruction", "items": ["700g chicken"]}}]}}
+        Text: {text[:8000]}"""
+        r2 = model.generate_content(p2)
+        return json.loads(r2.text.replace("```json", "").replace("```", ""))
     except Exception as e:
         return {"error": str(e)}
 
 # --- UI ---
 st.title("Interactive Kitchen")
-url = st.text_input("URL:")
-servings = st.number_input("Servings:", value=2)
 
-if st.button("Go"):
+col1, col2 = st.columns([0.8, 0.2])
+url = col1.text_input("Paste Recipe URL:")
+servings = col2.number_input("Servings:", min_value=1, value=2)
+
+if st.button("Go", type="primary"):
     with st.spinner("Processing..."):
         data = get_recipe(url, servings)
         if "error" in data: st.error(data["error"])
         else: 
-            st.session_state.data = data
+            st.session_state.recipe_data = data
+            st.session_state.current_step = 0
             st.rerun()
 
-if "data" in st.session_state:
-    for step in st.session_state.data["steps"]:
-        st.subheader(step["title"])
-        st.write(step["text"])
-        for item in step["items"]:
-            st.checkbox(item)
+if st.session_state.recipe_data:
+    steps = st.session_state.recipe_data["steps"]
+    step = steps[st.session_state.current_step]
+    
+    st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
+    st.subheader(step["title"])
+    st.write(step["text"])
+    
+    for j, item in enumerate(step["items"]):
+        # Unique keys fix the crash
+        st.checkbox(item, key=f"chk_{st.session_state.current_step}_{j}")
+    
+    col_back, col_next = st.columns(2)
+    if col_back.button("Back") and st.session_state.current_step > 0:
+        st.session_state.current_step -= 1
+        st.rerun()
+    if col_next.button("Next") and st.session_state.current_step < len(steps)-1:
+        st.session_state.current_step += 1
+        st.rerun()
