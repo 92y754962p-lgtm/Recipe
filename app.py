@@ -14,16 +14,23 @@ if "current_step" not in st.session_state: st.session_state.current_step = 0
 # --- Logic ---
 def get_recipe(url):
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        # Debugging step: check if we can reach the site
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if response.status_code != 200:
+            return {"error": f"Site returned status {response.status_code}"}
+        
         soup = BeautifulSoup(response.text, "html.parser")
-        text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:]
+        text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:3000]
         
-        prompt = f"""Return ONLY a JSON object: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
-        Source: {text[:1500]}"""
+        prompt = f"""Extract recipe into a JSON object: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
+        Source: {text}"""
         
-        model = genai.GenerativeModel("gemini-3.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash") # Switched to 1.5-flash for reliability
         res = model.generate_content(prompt)
-        raw = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
+        
+        # Clean response
+        clean_res = res.text.strip().replace("```json", "").replace("```", "")
+        raw = json.loads(clean_res)
         
         if isinstance(raw, list): raw = {"steps": raw}
         return raw
@@ -36,14 +43,17 @@ st.title("Interactive AI Kitchen")
 if st.session_state.recipe_data is None:
     url = st.text_input("Paste Recipe URL:")
     if st.button("Go"):
-        with st.spinner("Loading recipe..."):
-            result = get_recipe(url)
-            if "error" in result:
-                st.error(f"Could not load recipe: {result['error']}")
-            else:
-                st.session_state.recipe_data = result
-                st.session_state.current_step = 0
-                st.rerun()
+        if not url:
+            st.warning("Please paste a URL.")
+        else:
+            with st.spinner("Loading recipe..."):
+                result = get_recipe(url)
+                if "error" in result:
+                    st.error(f"Error: {result['error']}")
+                else:
+                    st.session_state.recipe_data = result
+                    st.session_state.current_step = 0
+                    st.rerun()
 else:
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
@@ -52,9 +62,8 @@ else:
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
     
-    # Safety Check
     if not steps:
-        st.error("No recipe steps found.")
+        st.error("No steps could be extracted from this URL.")
         if st.button("Back"): st.session_state.recipe_data = None; st.rerun()
     else:
         if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
