@@ -92,4 +92,4 @@ else:
             ing_name = ing.get('name', 'Ingredient')
             options = ing.get('amount_options', ["Amount not specified"])
             
-            st.checkbox(ing_name, key=f"check_{st.session_
+            st.checkbox(ing_name, key=f"check_{st.session_}
