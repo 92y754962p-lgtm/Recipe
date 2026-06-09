@@ -12,7 +12,7 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
-def get_recipe(url, servings):
+def get_recipe(url, target_servings, status_container):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
@@ -22,10 +22,45 @@ def get_recipe(url, servings):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
         
-        prompt = f"""
-        Extract the recipe into this exact JSON format. 
-        CRITICAL: Scale all ingredient amounts to yield exactly {servings} servings. If the original text makes a different amount, calculate the new scaled amounts.
-        For every ingredient, provide the scaled amount in both metric and imperial units as a list of strings in the 'amount_options' array.
+        model = genai.GenerativeModel("gemini-3.5-flash")
+        
+        # --- PASS 1: Strict Extraction ---
+        status_container.update(label="Pass 1: Extracting exact recipe text...", state="running")
+        extract_prompt = f"""
+        Extract the recipe from the source text EXACTLY as written. 
+        CRITICAL: Do not add, remove, or modify any ingredients or instructions. Do not convert units. Do not change the cooking method.
+        Identify the original number of servings. If not found, assume 1.
+        
+        Output JSON only:
+        {{
+          "original_servings": 2,
+          "steps": [
+            {{
+              "action_header": "Title",
+              "description": "Exact instruction text",
+              "timer_minutes": 0,
+              "ingredients": [ {{"name": "ingredient name", "original_amount": "exact amount from text"}} ]
+            }}
+          ]
+        }}
+        Source text: {text}
+        """
+        
+        res1 = model.generate_content(extract_prompt)
+        clean_res1 = res1.text.strip().replace("```json", "").replace("```", "")
+        extracted_data = json.loads(clean_res1)
+        original_servings = extracted_data.get("original_servings", 1)
+        
+        # --- PASS 2: Mathematical Scaling ---
+        status_container.update(label=f"Pass 2: Scaling from {original_servings} to {target_servings} servings...", state="running")
+        scale_prompt = f"""
+        You are a strict mathematical calculator. 
+        Take the following recipe JSON and scale it from its original {original_servings} servings to {target_servings} servings.
+        Multiply every ingredient amount by ({target_servings} / {original_servings}).
+        
+        For each ingredient, calculate the newly scaled amount and provide it in both metric and imperial units as a list of strings in the 'amount_options' array. Keep the descriptions and steps exactly the same.
+        
+        Output JSON only:
         {{
           "steps": [
             {{
@@ -35,20 +70,22 @@ def get_recipe(url, servings):
               "ingredients": [ 
                 {{
                     "name": "ingredient name", 
-                    "amount_options": ["500 g", "1.1 lbs", "17.6 oz"] 
+                    "amount_options": ["scaled metric", "scaled imperial", "alternative unit"] 
                 }} 
               ]
             }}
           ]
         }}
-        Source text: {text}
+        Original JSON to scale: {json.dumps(extracted_data)}
         """
         
-        model = genai.GenerativeModel("gemini-3.5-flash")
-        res = model.generate_content(prompt)
+        res2 = model.generate_content(scale_prompt)
+        clean_res2 = res2.text.strip().replace("```json", "").replace("```", "")
+        final_data = json.loads(clean_res2)
         
-        clean_res = res.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(clean_res)
+        status_container.update(label="Complete!", state="complete")
+        return final_data
+        
     except Exception as e:
         return {"error": str(e)}
 
@@ -64,14 +101,15 @@ if st.session_state.recipe_data is None:
     col_l, col_center, col_r = st.columns([1, 2, 1])
     with col_center:
         if st.button("Go", type="primary", use_container_width=True):
-            with st.spinner("Loading..."):
-                result = get_recipe(url, servings)
-                if "error" in result:
-                    st.error(f"Error: {result['error']}")
-                else:
-                    st.session_state.recipe_data = result
-                    st.session_state.current_step = 0
-                    st.rerun()
+            with st.status("Initializing AI Pipeline...", expanded=True) as status:
+                result = get_recipe(url, servings, status)
+                
+            if "error" in result:
+                st.error(f"Error: {result['error']}")
+            else:
+                st.session_state.recipe_data = result
+                st.session_state.current_step = 0
+                st.rerun()
 else:
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
@@ -106,7 +144,6 @@ else:
         
         st.write("") 
         
-        # 6:1:1 ratio with an explicit st.empty() prevents column collapse
         col_space, col_back, col_next = st.columns([6, 1, 1])
         
         with col_space:
