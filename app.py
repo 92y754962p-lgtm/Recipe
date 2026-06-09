@@ -18,36 +18,37 @@ def get_recipe(url, target_servings, status_container):
         response = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Remove scripts/styles to clean text
-        for s in soup(["script", "style"]): s.decompose()
-        full_text = soup.get_text(separator='\n')
+        # ANCHOR 1 & 2: Extract blocks manually
+        ing_header = soup.find(lambda t: t.name in ['h2', 'h3'] and 'ingredient' in t.get_text().lower())
+        ing_list = ing_header.find_next(['ul', 'ol']).get_text(separator="|") if ing_header else "No list found"
         
+        step_header = soup.find(lambda t: t.name in ['h2', 'h3'] and 'step' in t.get_text().lower())
+        steps_list = step_header.find_next(['ol', 'ul']).get_text(separator="|") if step_header else "No steps found"
+
         model = genai.GenerativeModel("gemini-3.5-flash")
-        status_container.update(label="Analyzing recipe...", state="running")
+        status_container.update(label="Mapping and scaling data...", state="running")
         
         prompt = f"""
-        Extract recipe as JSON.
-        Target Servings: {target_servings}.
-        Identify the 'Ingredients' list and 'Steps'.
-        For every ingredient in a step, find the exact amount from the 'Ingredients' list. Scale that amount for {target_servings} servings.
+        Map these ingredients to these steps. 
+        Ingredients: {ing_list}
+        Steps: {steps_list}
+        
+        CRITICAL: For every ingredient in a step, use the PRECISE measurement from the Ingredients list. Do not infer. If the list says '700g', use '700g'. Do not use count (e.g., '2').
+        Scale all amounts to {target_servings} servings.
         
         Output JSON only:
         {{
-            "steps": [
-                {{
-                    "action_header": "Title",
-                    "description": "Step instruction",
-                    "ingredients": [ {{"name": "Name", "amount_options": ["100g", "3.5oz"]}} ]
-                }}
-            ]
+          "steps": [
+            {{
+              "action_header": "Title",
+              "description": "Instruction",
+              "ingredients": [ {{"name": "...", "amount_options": ["700g (scaled)", "1.5 lbs (scaled)"]}} ]
+            }}
+          ]
         }}
-        
-        Recipe text: {full_text[:10000]}
         """
-        
         res = model.generate_content(prompt)
-        raw_json = res.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(raw_json)
+        return json.loads(res.text.replace("```json", "").replace("```", ""))
     except Exception as e:
         return {"error": str(e)}
 
@@ -60,7 +61,7 @@ if st.session_state.recipe_data is None:
     servings = col2.number_input("Servings:", min_value=1, value=2, step=1)
     
     st.write("") 
-    col_l, col_center, col_r = st.columns([1, 2, 1])
+    _, col_center, _ = st.columns([1, 2, 1])
     if col_center.button("Go", type="primary", use_container_width=True):
         with st.status("Initializing...", expanded=True) as status:
             result = get_recipe(url, servings, status)
@@ -76,21 +77,19 @@ else:
 
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
-    
     if steps:
         if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
         step = steps[st.session_state.current_step]
-        
         st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
         st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
         st.info(step.get('description', ''))
         
         for i, ing in enumerate(step.get('ingredients', [])):
-            st.checkbox(ing.get('name'), key=f"check_{i}")
-            st.selectbox(label="amount", options=ing.get('amount_options', ["Amount not specified"]), key=f"select_{i}", label_visibility="collapsed")
+            st.checkbox(ing.get('name'), key=f"c_{i}")
+            st.selectbox(label="amount", options=ing.get('amount_options', ["N/A"]), key=f"s_{i}", label_visibility="collapsed")
         
         col_space, col_back, col_next = st.columns([6, 1, 1])
-        with col_space: st.empty() 
+        with col_space: st.empty()
         with col_back:
             if st.button("Back", use_container_width=True) and st.session_state.current_step > 0:
                 st.session_state.current_step -= 1; st.rerun()
