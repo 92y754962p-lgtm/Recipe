@@ -20,6 +20,61 @@ st.title("Interactive AI Kitchen Interface")
 
 url_input = st.text_input("Paste Recipe URL:")
 
+# Ingredient density database (grams per 1 cup) for Python-side conversions
+INGREDIENT_DENSITIES = {
+    "flour": 120.0,
+    "sugar": 200.0,
+    "granulated sugar": 200.0,
+    "brown sugar": 200.0,
+    "powdered sugar": 120.0,
+    "butter": 227.0,
+    "water": 236.6,
+    "milk": 242.0,
+    "almond milk": 240.0,
+    "oil": 218.0,
+    "vegetable oil": 218.0,
+    "salt": 300.0,  # 1 cup of salt is roughly 300g (though usually measured in tsp)
+    "baking powder": 240.0,
+    "baking soda": 288.0,
+}
+
+def convert_units(amount, unit, ingredient_name):
+    """Calculates metric and imperial variations locally to save LLM compute time."""
+    normalized_ing = ingredient_name.lower().strip()
+    unit = unit.lower().strip()
+    
+    # Standardize common unit strings
+    if unit in ["cup", "cups", "c"]:
+        base_cups = amount
+    elif unit in ["tablespoon", "tablespoons", "tbsp", "tbs"]:
+        base_cups = amount / 16.0
+    elif unit in ["teaspoon", "teaspoons", "tsp"]:
+        base_cups = amount / 48.0
+    elif unit in ["fluid ounce", "fluid ounces", "fl oz"]:
+        base_cups = amount / 8.0
+    else:
+        # Fallback if unit is already a weight or unhandled
+        if unit in ["gram", "grams", "g"]:
+            return [f"{amount} Grams", f"{amount/28.35:.2f} Ounces"]
+        if unit in ["ounce", "ounces", "oz"]:
+            return [f"{amount} Ounces", f"{amount*28.35:.1f} Grams"]
+        return [f"{amount} {unit}"]
+
+    # Determine density factors
+    density = INGREDIENT_DENSITIES.get(normalized_ing, 236.6) # Default to water density
+    
+    grams = base_cups * density
+    ounces = grams / 28.35
+    
+    # Generate cleaner strings depending on scale
+    options = [f"{amount} {unit}"]
+    if grams >= 1:
+        options.append(f"{grams:.1f} Grams")
+    if ounces >= 0.05:
+        options.append(f"{ounces:.2f} Ounces")
+        
+    return options
+
 def fetch_and_parse_recipe(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -34,7 +89,7 @@ def fetch_and_parse_recipe(url):
         1. Break down steps by the specific vessel/bowl being used. 
         2. Do not use paragraph format for ingredients. Extract every ingredient mentioned in the step and list them individually.
         3. Cross-reference generic terms (e.g., "dry ingredients") with the master ingredient list. Explicitly list the exact ingredients and their measurements.
-        4. For EVERY ingredient measurement, calculate and provide at least three unit variations in an array: Original, Metric (grams/ml), and Imperial (ounces/cups/lbs).
+        4. Isolate the numerical quantity and unit name into separate fields. Do not perform math conversions here.
         
         JSON Schema Requirements:
         1. "title": String name of recipe.
@@ -45,7 +100,8 @@ def fetch_and_parse_recipe(url):
             - "timer_minutes": Integer (cooking duration, 0 if none).
             - "ingredients": List of objects for each item used in this step:
                 - "name": String (e.g., "Flour")
-                - "options": List of strings containing converted values (e.g., ["1.5 Cups", "180 Grams", "6.3 Ounces"])
+                - "amount": Float (The numerical value only, e.g., 1.5)
+                - "unit": String (The unit label only, e.g., "Cups")
         
         Recipe Source Text:
         {text_content[:8000]}
@@ -100,38 +156,47 @@ if st.session_state.recipe_data:
         st.markdown(f"### 🥣 {step.get('action_header', 'Action Needed')}")
         st.info(step.get("description", ""))
         
-        # Display Ingredients with Inline Unit Toggles
+        # Display Ingredients with Inline Unit Toggles calculated via Python
         ingredients = step.get("ingredients", [])
         if ingredients:
             st.write("**Ingredients:**")
             for i, ing in enumerate(ingredients):
                 col1, col2 = st.columns([1, 2])
                 with col1:
-                    # Checkbox for the ingredient name
                     st.checkbox(f"**{ing.get('name', 'Ingredient')}**", key=f"check_{idx}_{i}")
                 with col2:
-                    # Dropdown acting as the inline amount display
-                    options = ing.get("options", ["Amount not specified"])
+                    # Calculate unit drop-down arrays dynamically in local memory
+                    amt = ing.get("amount", 0.0)
+                    unt = ing.get("unit", "")
+                    name = ing.get("name", "")
+                    
+                    calculated_options = convert_units(amt, unt, name)
+                    
                     st.selectbox(
-                        label=f"Amount for {ing.get('name')}", 
-                        options=options, 
+                        label=f"Amount for {name}", 
+                        options=calculated_options, 
                         key=f"amount_{idx}_{i}",
                         label_visibility="collapsed"
                     )
             
-        # Contextual Step Timer
+        # Contextual Step Timer with an animated progress bar
         timer_mins = step.get("timer_minutes", 0)
         if timer_mins > 0:
             st.write("---")
             st.write("**Active Step Timer:**")
             timer_display = st.empty()
+            timer_bar = st.progress(1.0)
+            
             if st.button(f"Start Countdown ({timer_mins} mins)", key=f"timer_start_{idx}"):
                 total_seconds = timer_mins * 60
+                initial_seconds = total_seconds
                 while total_seconds > 0:
                     m, s = divmod(total_seconds, 60)
                     timer_display.metric("Time Remaining", f"{m:02d}:{s:02d}")
+                    timer_bar.progress(total_seconds / initial_seconds)
                     time.sleep(1)
                     total_seconds -= 1
+                timer_bar.progress(0.0)
                 timer_display.success("Timer Complete!")
         
         st.write("---")
