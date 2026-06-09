@@ -1,7 +1,5 @@
 import streamlit as st
 import google.generativeai as genai
-import requests
-from bs4 import BeautifulSoup
 import json
 
 # --- Config ---
@@ -12,18 +10,9 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
-def get_recipe(url):
+def process_recipe_text(text):
     try:
-        # Standard request with no extra headers to test for direct blocks
-        response = requests.get(url, timeout=15)
-        
-        if response.status_code != 200:
-            return {"error": f"Site returned status {response.status_code}"}
-        
-        soup = BeautifulSoup(response.text, "html.parser")
-        text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
-        
-        prompt = f"""Extract recipe into this JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
+        prompt = f"""Extract recipe into this exact JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
         Source: {text}"""
         
         model = genai.GenerativeModel("gemini-3.5-flash")
@@ -34,7 +23,6 @@ def get_recipe(url):
         
         if isinstance(data, list): data = {"steps": data}
         if "steps" not in data: data = {"steps": [data]}
-            
         return data
     except Exception as e:
         return {"error": str(e)}
@@ -43,13 +31,15 @@ def get_recipe(url):
 st.title("Interactive AI Kitchen")
 
 if st.session_state.recipe_data is None:
-    url = st.text_input("Paste Recipe URL:")
-    if st.button("Go"):
-        if not url:
-            st.warning("Please paste a URL.")
+    st.info("Since recipe sites are blocking automation, paste the **raw recipe text** below to get started.")
+    raw_text = st.text_area("Paste recipe text here:", height=200)
+    
+    if st.button("Generate Steps"):
+        if not raw_text:
+            st.warning("Please paste the recipe text.")
         else:
-            with st.spinner("Loading..."):
-                result = get_recipe(url)
+            with st.spinner("Processing..."):
+                result = process_recipe_text(raw_text)
                 if "error" in result:
                     st.error(f"Error: {result['error']}")
                 else:
@@ -65,8 +55,7 @@ else:
     steps = recipe.get('steps', [])
     
     if not steps:
-        st.error("No recipe steps found.")
-        if st.button("Back"): st.session_state.recipe_data = None; st.rerun()
+        st.error("No steps found.")
     else:
         if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
         
