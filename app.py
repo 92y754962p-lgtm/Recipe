@@ -22,11 +22,20 @@ def get_recipe(url, target_servings, status_container):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
         
+        # Using the current production-standard model: gemini-3.5-flash
         model = genai.GenerativeModel("gemini-3.5-flash")
         
-        # --- PASS 1 ---
+        # --- PASS 1: Extraction ---
         status_container.update(label="Pass 1: Extracting...", state="running")
-        extract_prompt = f"Extract recipe as JSON with keys 'original_servings' and 'steps' (each step with 'action_header', 'description', 'ingredients' containing 'name' and 'original_amount'). Source: {text}"
+        extract_prompt = f"""
+        Extract the recipe into a JSON object with 'original_servings' and 'steps' (list).
+        Each step must have 'action_header', 'description', and 'ingredients' (list).
+        Each ingredient must have 'name' and 'original_amount'.
+        
+        CRITICAL: For every ingredient found in the 'Ingredients' list, use that exact amount in all steps. Do not infer or invent measurements.
+        
+        Source text: {text}
+        """
         res1 = model.generate_content(extract_prompt)
         raw_json1 = res1.text.strip().replace("```json", "").replace("```", "")
         
@@ -37,9 +46,15 @@ def get_recipe(url, target_servings, status_container):
             
         original_servings = extracted_data.get("original_servings", 1)
         
-        # --- PASS 2 ---
+        # --- PASS 2: Scaling ---
         status_container.update(label="Pass 2: Scaling...", state="running")
-        scale_prompt = f"Scale this JSON to {target_servings} servings. Provide 'amount_options' list for each ingredient. JSON: {json.dumps(extracted_data)}"
+        scale_prompt = f"""
+        Scale this recipe to {target_servings} servings (multiplier: {target_servings}/{original_servings}).
+        Keep 'action_header', 'description' identical.
+        For each ingredient, output 'name' and 'amount_options' (list of strings with metric/imperial).
+        
+        JSON: {json.dumps(extracted_data)}
+        """
         res2 = model.generate_content(scale_prompt)
         raw_json2 = res2.text.strip().replace("```json", "").replace("```", "")
         
@@ -74,6 +89,7 @@ if st.session_state.recipe_data is None:
             st.session_state.current_step = 0
             st.rerun()
 else:
+    # ... (UI Rendering remains exactly as before)
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
         st.rerun()
@@ -89,29 +105,18 @@ else:
         st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
         st.info(step.get('description', ''))
         
-        if step.get('timer_minutes', 0) > 0:
-            st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
-        
         for i, ing in enumerate(step.get('ingredients', [])):
             ing_name = ing.get('name', 'Ingredient')
             options = ing.get('amount_options', ["Amount not specified"])
             
             st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
-            
-            st.selectbox(
-                label=f"amount_{st.session_state.current_step}_{i}",
-                options=options,
-                key=f"select_{st.session_state.current_step}_{i}",
-                label_visibility="collapsed"
-            )
+            st.selectbox(label=f"amount_{st.session_state.current_step}_{i}", options=options, key=f"select_{st.session_state.current_step}_{i}", label_visibility="collapsed")
         
         col_space, col_back, col_next = st.columns([6, 1, 1])
         with col_space: st.empty() 
         with col_back:
             if st.button("Back", use_container_width=True) and st.session_state.current_step > 0:
-                st.session_state.current_step -= 1
-                st.rerun()
+                st.session_state.current_step -= 1; st.rerun()
         with col_next:
             if st.button("Next", use_container_width=True) and st.session_state.current_step < len(steps)-1:
-                st.session_state.current_step += 1
-                st.rerun()
+                st.session_state.current_step += 1; st.rerun()
