@@ -14,16 +14,15 @@ if "current_step" not in st.session_state: st.session_state.current_step = 0
 # --- Logic ---
 def get_recipe(url):
     try:
-        # Standard request with no extra headers to test for direct blocks
+        # Standard request to check if the site is reachable
         response = requests.get(url, timeout=15)
-        
         if response.status_code != 200:
             return {"error": f"Site returned status {response.status_code}"}
         
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
         
-        prompt = f"""Extract recipe into this JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
+        prompt = f"""Extract recipe into this JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [ {{"name": "...", "amount": 0, "unit": "..."}} ] }} ] }}. 
         Source: {text}"""
         
         model = genai.GenerativeModel("gemini-3.5-flash")
@@ -78,8 +77,13 @@ else:
         if step.get('timer_minutes', 0) > 0:
             st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
         
-        for i, ing in enumerate(step.get('ingredients', [])):
-            st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})")
+        # FIX: Robustly handle ingredients whether they are dicts or strings
+        for ing in step.get('ingredients', []):
+            if isinstance(ing, dict):
+                label = f"{ing.get('name', 'Item')} ({ing.get('amount', 0)} {ing.get('unit', '')})"
+            else:
+                label = str(ing) # Fallback if AI just returned a raw string
+            st.checkbox(label)
         
         c1, c2 = st.columns(2)
         if c1.button("Back") and st.session_state.current_step > 0:
