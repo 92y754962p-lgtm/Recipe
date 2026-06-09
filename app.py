@@ -3,9 +3,8 @@ import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import json
-import time
 
-# Configure Gemini API
+# Configuration
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
@@ -25,10 +24,8 @@ INGREDIENT_DENSITIES = {
 
 def convert_units(amount, unit, ingredient_name):
     unit, name = unit.lower().strip(), ingredient_name.lower().strip()
-    # Simple logic to handle batch vs raw units
     if unit in ["batch", "mixture"]: return [f"{amount} {unit.capitalize()}"]
     
-    # Base normalization
     if unit in ["cup", "cups"]: base_cups = amount
     elif unit in ["tbsp"]: base_cups = amount / 16.0
     elif unit in ["tsp"]: base_cups = amount / 48.0
@@ -37,12 +34,26 @@ def convert_units(amount, unit, ingredient_name):
     grams = base_cups * INGREDIENT_DENSITIES.get(name, 236.6)
     return [f"{amount} {unit.capitalize()}", f"{grams:.1f} Grams", f"{grams/28.35:.1f} Ounces"]
 
+def process_steps_atomically(recipe_data):
+    new_steps = []
+    for step in recipe_data.get('steps', []):
+        desc = step.get('description', '')
+        # Split by sentence to force atomic steps
+        sentences = [s.strip() for s in desc.replace(';', '.').split('.') if s.strip()]
+        for i, sub_desc in enumerate(sentences):
+            new_step = step.copy()
+            new_step['description'] = sub_desc
+            # Only associate ingredients with the first sub-step to avoid repetition
+            if i > 0: new_step['ingredients'] = []
+            new_steps.append(new_step)
+    return new_steps
+
 def fetch_and_parse_recipe(url):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Bypass blog: Extract JSON-LD or just p/li tags
+        # Scrape Schema
         recipe_schema = None
         for script in soup.find_all("script", type="application/ld+json"):
             try:
@@ -52,27 +63,20 @@ def fetch_and_parse_recipe(url):
         
         text_content = json.dumps(recipe_schema) if recipe_schema else " ".join([p.get_text() for p in soup.find_all(["p", "li"])])
         
-        prompt = f"""
-        Extract recipe steps from the provided source.
-        
-        STRICT RULES:
-        1. ATOMIC STEPS: Break instructions into the smallest logical actions. If a recipe says "mix X and Y, then add to Z", create separate steps for each.
-        2. MIX RULE: If a step uses a previously made mixture, list it as a "Batch". Do not relist raw ingredients.
-        3. FORMAT: Output ONLY raw JSON. No markdown.
-        
-        Schema: {{"title": "...", "steps": [{{"step_number": 1, "action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [{{"name": "...", "amount": 0.0, "unit": "..."}}]}}]}}
-        Source: {text_content[:8000]}
-        """
+        prompt = f"Convert this recipe into JSON with title and steps (each containing action_header, description, ingredients list with name, amount, unit). No extra commentary. Source: {text_content[:4000]}"
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         response = model.generate_content(prompt)
-        return json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        raw_recipe = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        
+        raw_recipe['steps'] = process_steps_atomically(raw_recipe)
+        return raw_recipe
     except Exception as e:
         st.error(f"Error: {e}")
         return None
 
 if st.button("Process Recipe"):
-    with st.spinner("Parsing atomic steps..."):
+    with st.spinner("Analyzing recipe..."):
         recipe = fetch_and_parse_recipe(url_input)
         if recipe:
             st.session_state.recipe_data = recipe
@@ -83,7 +87,6 @@ if st.session_state.recipe_data:
     recipe = st.session_state.recipe_data
     step = recipe['steps'][st.session_state.current_step]
     
-    # Progress UI
     progress_val = (st.session_state.current_step + 1) / len(recipe['steps'])
     st.progress(progress_val)
     st.caption(f"Step {st.session_state.current_step + 1} of {len(recipe['steps'])}")
@@ -96,7 +99,6 @@ if st.session_state.recipe_data:
         c1.checkbox(ing['name'], key=f"c_{st.session_state.current_step}_{i}")
         c2.selectbox(ing['name'], options=convert_units(ing['amount'], ing['unit'], ing['name']), label_visibility="collapsed")
     
-    # Navigation
     cols = st.columns(2)
     if cols[0].button("Back") and st.session_state.current_step > 0:
         st.session_state.current_step -= 1; st.rerun()
