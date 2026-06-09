@@ -4,7 +4,6 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import threading
-import time
 
 # --- Config ---
 if "GEMINI_API_KEY" in st.secrets:
@@ -30,11 +29,10 @@ def background_parse(url):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:]
         
-        prompt = f"Convert to JSON (title, steps: [{{action_header, description, ingredients: [{{name, amount, unit}}]}}]). Source: {text[:1500]}"
+        prompt = f"Convert to JSON (title, steps: [{{action_header, description, ingredients: [{{name, amount, unit}}]}}]). No commentary. Source: {text[:1500]}"
         res = genai.GenerativeModel("gemini-3.5-flash").generate_content(prompt)
         raw = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
         
-        # Atomic split logic
         final_steps = []
         for step in raw.get('steps', []):
             sentences = [s.strip() for s in step.get('description', '').replace(';', '.').split('.') if s.strip()]
@@ -46,6 +44,7 @@ def background_parse(url):
         st.error(f"Error: {e}")
     finally:
         st.session_state.loading = False
+        st.rerun() # Trigger one final rerun to hide spinner
 
 # --- UI ---
 st.title("Interactive AI Kitchen")
@@ -57,11 +56,9 @@ if st.button("Start Cooking"):
     threading.Thread(target=background_parse, args=(url,)).start()
 
 if st.session_state.loading:
-    with st.spinner("Parsing recipe..."):
-        time.sleep(1)
-        st.rerun()
-
-if st.session_state.recipe_data:
+    with st.spinner("Parsing recipe in background..."):
+        pass # Spinner stays until background_parse calls st.rerun()
+elif st.session_state.recipe_data:
     step = st.session_state.recipe_data['steps'][st.session_state.current_step]
     st.caption(f"Step {st.session_state.current_step + 1} of {len(st.session_state.recipe_data['steps'])}")
     st.markdown(f"### 🥣 {step.get('action_header')}")
