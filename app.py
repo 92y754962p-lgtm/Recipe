@@ -12,7 +12,7 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
-def get_recipe(url):
+def get_recipe(url, servings):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
@@ -24,7 +24,8 @@ def get_recipe(url):
         
         prompt = f"""
         Extract the recipe into this exact JSON format. 
-        For every ingredient, calculate and provide the amount in both metric and imperial units as a list of strings in the 'amount_options' array.
+        CRITICAL: Scale all ingredient amounts to yield exactly {servings} servings. If the original text makes a different amount, calculate the new scaled amounts.
+        For every ingredient, provide the scaled amount in both metric and imperial units as a list of strings in the 'amount_options' array.
         {{
           "steps": [
             {{
@@ -55,10 +56,13 @@ def get_recipe(url):
 st.title("Interactive AI Kitchen")
 
 if st.session_state.recipe_data is None:
-    url = st.text_input("Paste Recipe URL:")
+    col1, col2 = st.columns([0.8, 0.2])
+    url = col1.text_input("Paste Recipe URL:")
+    servings = col2.number_input("Servings:", min_value=1, value=2, step=1)
+    
     if st.button("Go"):
         with st.spinner("Loading..."):
-            result = get_recipe(url)
+            result = get_recipe(url, servings)
             if "error" in result:
                 st.error(f"Error: {result['error']}")
             else:
