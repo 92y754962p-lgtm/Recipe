@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import json
 
 # --- Config ---
-# Ensure your Streamlit Secret GEMINI_API_KEY is from a NEW, clean project
+# Ensure your Streamlit Secret GEMINI_API_KEY is from a clean, billed project
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
@@ -15,24 +15,35 @@ if "current_step" not in st.session_state: st.session_state.current_step = 0
 # --- Logic ---
 def get_recipe(url):
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        # Mimic a real browser to avoid 402/Bot-blocking errors
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.google.com/",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+        
+        session = requests.Session()
+        response = session.get(url, headers=headers, timeout=15)
+        
         if response.status_code != 200:
-            return {"error": f"Site returned status {response.status_code}"}
+            return {"error": f"Site returned status {response.status_code}. Access blocked."}
         
         soup = BeautifulSoup(response.text, "html.parser")
-        text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:4000]
+        # Extract text content from main recipe areas
+        text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:6000]
         
-        prompt = f"""Extract recipe into this exact JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
+        prompt = f"""Extract this recipe into this exact JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
         Source: {text}"""
         
-        # USE gemini-3.5-flash (The current stable model as of June 2026)
+        # Use gemini-3.5-flash (Current 2026 stable model)
         model = genai.GenerativeModel("gemini-3.5-flash")
         res = model.generate_content(prompt)
         
+        # Clean response and parse
         clean_res = res.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(clean_res)
         
-        # Ensure it is a dictionary with a 'steps' key
+        # FOOLPROOF: Convert list to dict if needed
         if isinstance(data, list): data = {"steps": data}
         if "steps" not in data: data = {"steps": [data]}
             
@@ -65,6 +76,7 @@ else:
     recipe = st.session_state.recipe_data
     steps = recipe.get('steps', [])
     
+    # Safety Check: Handle empty recipe or index out of bounds
     if not steps:
         st.error("No recipe steps found.")
         if st.button("Back"): st.session_state.recipe_data = None; st.rerun()
