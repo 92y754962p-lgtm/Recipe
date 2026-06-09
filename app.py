@@ -1,49 +1,67 @@
 import streamlit as st
 from recipe_scrapers import scrape_me
+import google.generativeai as genai
+import json
 
-# --- Master Code ---
-# Base state initialization
+# --- Config ---
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
 if "recipe" not in st.session_state: st.session_state.recipe = None
 if "step" not in st.session_state: st.session_state.step = 0
 
 st.title("Interactive Kitchen")
 
-# Fetch Input
 url = st.text_input("Paste Recipe URL:")
 
-if st.button("Fetch"):
-    try:
-        # 1. Deterministic Data Extraction (No LLM)
-        scraper = scrape_me(url)
-        st.session_state.recipe = {
-            "title": scraper.title(),
-            "ingredients": scraper.ingredients(),
-            "instructions": scraper.instructions_list()
-        }
-        st.session_state.step = 0
-        st.rerun()
-    except Exception as e:
-        st.error(f"Scraper error: {e}")
+if st.button("Fetch and Build", use_container_width=True):
+    with st.status("Structuring recipe...", expanded=True) as status:
+        try:
+            scraper = scrape_me(url)
+            
+            # LLM only used to map ingredients to steps and generate conversions
+            model = genai.GenerativeModel("gemini-3.5-flash")
+            prompt = f"""
+            Map these ingredients to these steps.
+            Ingredients: {json.dumps(scraper.ingredients())}
+            Steps: {json.dumps(scraper.instructions_list())}
+            
+            For each step, provide:
+            1. The original text (verbatim).
+            2. The specific ingredients used in that step.
+            3. A list of 3 conversion options (e.g., ['700g', '25oz', '1.5lbs']) for each ingredient.
+            
+            Return JSON: {{"steps": [{{"text": "...", "ingredients": [{{"name": "...", "conversions": ["..."]}}]}}]}}
+            """
+            res = model.generate_content(prompt)
+            data = json.loads(res.text.replace("```json", "").replace("```", ""))
+            
+            st.session_state.recipe = {"title": scraper.title(), "all_ing": scraper.ingredients(), **data}
+            st.session_state.step = 0
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-# Data Display
+# --- Display ---
 if st.session_state.recipe:
     r = st.session_state.recipe
     
-    # Sidebar: Master Ingredient List
     with st.sidebar:
-        st.header("Master Ingredient List")
-        for ing in r["ingredients"]:
-            st.write(f"• {ing}")
-            
-    # Main: Verbatim Instructions
-    st.subheader(r["title"])
-    st.info(r["instructions"][st.session_state.step])
+        st.header("Master List")
+        for ing in r["all_ing"]: st.write(f"• {ing}")
     
-    # Step Control
-    st.checkbox("Step Done")
+    curr = r["steps"][st.session_state.step]
+    st.subheader(f"Step {st.session_state.step + 1}")
+    st.info(curr["text"])
     
+    # Ingredient Dropdowns
+    for ing in curr["ingredients"]:
+        c1, c2 = st.columns([0.6, 0.4])
+        c1.write(ing["name"])
+        c2.selectbox("Unit", ing["conversions"], key=f"sel_{ing['name']}", label_visibility="collapsed")
+    
+    # Navigation
     c1, c2 = st.columns(2)
-    if c1.button("Back") and st.session_state.step > 0:
+    if c1.button("Back", use_container_width=True) and st.session_state.step > 0:
         st.session_state.step -= 1; st.rerun()
-    if c2.button("Next") and st.session_state.step < len(r["instructions"])-1:
+    if c2.button("Next", use_container_width=True) and st.session_state.step < len(r["steps"])-1:
         st.session_state.step += 1; st.rerun()
