@@ -16,24 +16,29 @@ def get_recipe(url, target_servings, status_container):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            return {"error": f"Site returned status {response.status_code}."}
+        
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # ANCHOR 1 & 2: Extract blocks manually
-        ing_header = soup.find(lambda t: t.name in ['h2', 'h3'] and 'ingredient' in t.get_text().lower())
+        # ANCHOR: Manually extract blocks
+        ing_header = soup.find(lambda t: t.name in ['h2', 'h3', 'div'] and 'ingredient' in t.get_text().lower())
         ing_list = ing_header.find_next(['ul', 'ol']).get_text(separator="|") if ing_header else "No list found"
         
-        step_header = soup.find(lambda t: t.name in ['h2', 'h3'] and 'step' in t.get_text().lower())
+        step_header = soup.find(lambda t: t.name in ['h2', 'h3', 'div'] and 'step' in t.get_text().lower())
         steps_list = step_header.find_next(['ol', 'ul']).get_text(separator="|") if step_header else "No steps found"
 
         model = genai.GenerativeModel("gemini-3.5-flash")
-        status_container.update(label="Mapping and scaling data...", state="running")
+        
+        # st.status automatically triggers the spinning icon during the 'with' block
+        status_container.update(label="Mapping and scaling...", state="running")
         
         prompt = f"""
         Map these ingredients to these steps. 
         Ingredients: {ing_list}
         Steps: {steps_list}
         
-        CRITICAL: For every ingredient in a step, use the PRECISE measurement from the Ingredients list. Do not infer. If the list says '700g', use '700g'. Do not use count (e.g., '2').
+        CRITICAL: Use the PRECISE measurement from the Ingredients list. Do not use 'count'. 
         Scale all amounts to {target_servings} servings.
         
         Output JSON only:
@@ -63,6 +68,7 @@ if st.session_state.recipe_data is None:
     st.write("") 
     _, col_center, _ = st.columns([1, 2, 1])
     if col_center.button("Go", type="primary", use_container_width=True):
+        # The spinner will spin while get_recipe is executing
         with st.status("Initializing...", expanded=True) as status:
             result = get_recipe(url, servings, status)
             if "error" in result: st.error(result['error'])
