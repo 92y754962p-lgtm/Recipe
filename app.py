@@ -42,7 +42,9 @@ def process_steps_atomically(recipe_data):
         for i, sub_desc in enumerate(sentences):
             new_step = step.copy()
             new_step['description'] = sub_desc
+            # Safety: Ensure 'ingredients' key exists as a list
             if i > 0: new_step['ingredients'] = []
+            elif 'ingredients' not in new_step: new_step['ingredients'] = []
             new_steps.append(new_step)
     return new_steps
 
@@ -51,13 +53,13 @@ def fetch_and_parse_recipe(url):
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Aggressive filtering: Only grab likely instruction/ingredient tags
         recipe_text = ""
         for tag in soup.find_all(['h1', 'h2', 'li', 'p']):
             text = tag.get_text().strip()
             if len(text) > 10: recipe_text += text + "\n"
         
-        prompt = f"Convert this to JSON (title, steps: action_header, description, ingredients: name, amount, unit). No commentary. Source: {recipe_text[:1500]}"
+        # Explicitly demanding empty list if no ingredients found
+        prompt = f"Convert to JSON. Format: {{\"title\": \"...\", \"steps\": [{{\"action_header\": \"...\", \"description\": \"...\", \"ingredients\": [{{\"name\": \"...\", \"amount\": 0.0, \"unit\": \"...\"}}]}}]}}. If no ingredients, return empty list []. Source: {recipe_text[:1500]}"
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         response = model.generate_content(prompt)
@@ -79,18 +81,23 @@ if st.button("Process Recipe"):
 
 if st.session_state.recipe_data:
     recipe = st.session_state.recipe_data
+    # Safety: Ensure current_step is valid
+    if st.session_state.current_step >= len(recipe['steps']):
+        st.session_state.current_step = 0
+        
     step = recipe['steps'][st.session_state.current_step]
     
     st.progress((st.session_state.current_step + 1) / len(recipe['steps']))
     st.caption(f"Step {st.session_state.current_step + 1} of {len(recipe['steps'])}")
     
-    st.markdown(f"### 🥣 {step['action_header']}")
-    st.info(step['description'])
+    st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
+    st.info(step.get('description', 'No description'))
     
-    for i, ing in enumerate(step['ingredients']):
+    # Safety: Use .get('ingredients', []) to prevent KeyError
+    for i, ing in enumerate(step.get('ingredients', [])):
         c1, c2 = st.columns([1, 2])
-        c1.checkbox(ing['name'], key=f"c_{st.session_state.current_step}_{i}")
-        c2.selectbox(ing['name'], options=convert_units(ing['amount'], ing['unit'], ing['name']), label_visibility="collapsed")
+        c1.checkbox(ing.get('name', 'Item'), key=f"c_{st.session_state.current_step}_{i}")
+        c2.selectbox(ing.get('name', 'Item'), options=convert_units(ing.get('amount', 0), ing.get('unit', ''), ing.get('name', '')), label_visibility="collapsed")
     
     cols = st.columns(2)
     if cols[0].button("Back") and st.session_state.current_step > 0:
