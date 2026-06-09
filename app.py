@@ -1,77 +1,76 @@
 import streamlit as st
-import google.generativeai as genai
-import requests
-from bs4 import BeautifulSoup
 import json
+from recipe_scrapers import scrape_me
+import google.generativeai as genai
 
 # --- Config ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Initialize session state
-if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
+# Initialize State
+if "raw_data" not in st.session_state: st.session_state.raw_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
-# --- Agentic Parsing Logic ---
-def get_recipe(url, target_servings, status_container):
-    try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        soup = BeautifulSoup(response.text, "html.parser")
-        text = soup.get_text(separator="\n")
-        model = genai.GenerativeModel("gemini-3.5-flash")
-        
-        # PASS 1: Create immutable Ground Truth
-        status_container.update(label="Phase 1: Creating Ground Truth...", state="running")
-        p1 = f"Extract a JSON dictionary of ALL ingredients and their EXACT amounts from this text: {text[:8000]}"
-        r1 = model.generate_content(p1)
-        ground_truth = json.loads(r1.text.replace("```json", "").replace("```", ""))
-        
-        # PASS 2: Map to layout (Strict Mode)
-        status_container.update(label="Phase 2: Mapping to layout...", state="running")
-        p2 = f"""Using ONLY this ingredient list: {json.dumps(ground_truth)}
-        Write recipe steps for {target_servings} servings. 
-        MAPPING RULE: For every ingredient in a step, replace the name with the value from the ingredient list.
-        Return JSON schema: {{"steps": [{{"title": "...", "text": "...", "ingredients": [{{"name": "...", "amount_options": ["700g", "1.5 lbs"]}}]}}]}}
-        Text: {text[:8000]}"""
-        r2 = model.generate_content(p2)
-        return json.loads(r2.text.replace("```json", "").replace("```", ""))
-    except Exception as e:
-        return {"error": str(e)}
+# --- Scaling Logic ---
+def scale_ingredients(ingredients, factor):
+    model = genai.GenerativeModel("gemini-3.5-flash")
+    prompt = f"""
+    Scale these ingredients by a factor of {factor}.
+    For each ingredient, provide the name and a list of alternative units (e.g. ['700g', '1.5 lbs']).
+    Return JSON: {{"ingredients": [{{"name": "Ingredient Name", "units": ["700g", "1.5 lbs"]}}]}}
+    Ingredients: {json.dumps(ingredients)}
+    """
+    res = model.generate_content(prompt)
+    raw = res.text.replace("```json", "").replace("```", "")
+    return json.loads(raw).get("ingredients", [])
 
-# --- UI (Visual Layout per your request) ---
+# --- UI ---
 st.title("Interactive AI Kitchen")
 
-if not st.session_state.recipe_data:
-    url = st.text_input("Recipe URL:")
-    servings = st.number_input("Servings:", min_value=1, value=2)
-    if st.button("Generate", type="primary"):
-        with st.status("Initializing...", expanded=True) as status:
-            data = get_recipe(url, servings, status)
-            if "error" in data: st.error(data["error"])
-            else: st.session_state.recipe_data = data; st.rerun()
-else:
-    # Sidebar
-    with st.sidebar:
-        st.header("Master Ingredients")
-        for step in st.session_state.recipe_data["steps"]:
-            for ing in step["ingredients"]:
-                st.write(f"• {ing['name']}")
-        if st.button("Reset"): st.session_state.recipe_data = None; st.rerun()
+# 1. Fetching
+col1, col2 = st.columns([0.8, 0.2])
+url = col1.text_input("Recipe URL:")
+if col2.button("Fetch"):
+    try:
+        scraper = scrape_me(url)
+        st.session_state.raw_data = {
+            "title": scraper.title(),
+            "ingredients": scraper.ingredients(),
+            "instructions": scraper.instructions_list(),
+            "servings": 2 # Default fallback
+        }
+        st.session_state.current_step = 0
+        st.rerun()
+    except Exception as e:
+        st.error(f"Error: {e}")
 
-    # Main Area
-    step = st.session_state.recipe_data["steps"][st.session_state.current_step]
-    st.subheader(step["title"])
-    st.info(step["text"])
+# 2. Display
+if st.session_state.raw_data:
+    st.divider()
+    # Scaling
+    servings = st.number_input("Servings:", value=st.session_state.raw_data["servings"])
+    factor = servings / st.session_state.raw_data["servings"]
+    scaled = scale_ingredients(st.session_state.raw_data["ingredients"], factor)
     
-    # Checkbox + Unit Selection
-    for j, ing in enumerate(step["ingredients"]):
+    # Sidebar: Ingredients
+    with st.sidebar:
+        st.header("Ingredients")
+        for ing in scaled:
+            st.write(f"• {ing['name']}")
+    
+    # Main: Directions (Raw text, no LLM interference)
+    instructions = st.session_state.raw_data["instructions"]
+    st.info(instructions[st.session_state.current_step])
+    
+    # Checkbox + Unit Selection (for ingredients in current step)
+    for j, ing in enumerate(scaled):
         c1, c2 = st.columns([0.7, 0.3])
-        with c1: st.checkbox(ing["name"], key=f"c_{st.session_state.current_step}_{j}")
-        with c2: st.selectbox("Units", ing["amount_options"], key=f"s_{st.session_state.current_step}_{j}", label_visibility="collapsed")
-    
+        c1.checkbox(ing["name"], key=f"ch_{j}")
+        c2.selectbox("Unit", ing["units"], key=f"sl_{j}", label_visibility="collapsed")
+        
     # Navigation
-    col1, col2, col3 = st.columns([1, 4, 1])
-    if col1.button("Back") and st.session_state.current_step > 0:
+    c1, c2, c3 = st.columns([1, 4, 1])
+    if c1.button("Back") and st.session_state.current_step > 0:
         st.session_state.current_step -= 1; st.rerun()
-    if col3.button("Next") and st.session_state.current_step < len(st.session_state.recipe_data["steps"])-1:
+    if c3.button("Next") and st.session_state.current_step < len(instructions)-1:
         st.session_state.current_step += 1; st.rerun()
