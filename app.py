@@ -23,13 +23,7 @@ def get_recipe(url, target_servings):
         
         prompt = f"""
         Extract recipe as JSON for {target_servings} servings.
-        Use exact measurements from the text.
-        Structure:
-        {{
-          "steps": [
-            {{"action_header": "Title", "description": "Text", "ingredients": [{{"name": "Name", "amount": "Measurement"}}]}}
-          ]
-        }}
+        Structure MUST be: {{ "steps": [ {{"action_header": "...", "description": "...", "ingredients": [{{"name": "...", "amount": "..."}}]}} ] }}
         Text: {text[:8000]}
         """
         
@@ -49,21 +43,27 @@ servings = col2.number_input("Servings:", min_value=1, value=2)
 if st.button("Go"):
     with st.spinner("Processing..."):
         result = get_recipe(url, servings)
-        if "error" in result: st.error(result['error'])
+        if "error" in result: 
+            st.error(result['error'])
         else:
             st.session_state.recipe_data = result
             st.session_state.current_step = 0
             st.rerun()
 
-if st.session_state.recipe_data:
-    step = st.session_state.recipe_data['steps'][st.session_state.current_step]
-    st.subheader(step['action_header'])
-    st.write(step['description'])
-    for ing in step['ingredients']:
-        st.checkbox(f"{ing['name']} ({ing['amount']})")
-    
-    col1, col2 = st.columns(2)
-    if col1.button("Back") and st.session_state.current_step > 0:
-        st.session_state.current_step -= 1; st.rerun()
-    if col2.button("Next") and st.session_state.current_step < len(st.session_state.recipe_data['steps'])-1:
-        st.session_state.current_step += 1; st.rerun()
+# SAFE ACCESS: Check if recipe_data exists AND has the 'steps' key
+if st.session_state.recipe_data and 'steps' in st.session_state.recipe_data:
+    steps = st.session_state.recipe_data['steps']
+    if 0 <= st.session_state.current_step < len(steps):
+        step = steps[st.session_state.current_step]
+        st.subheader(step.get('action_header', 'Step'))
+        st.write(step.get('description', ''))
+        for ing in step.get('ingredients', []):
+            st.checkbox(f"{ing.get('name', 'Item')} ({ing.get('amount', 'N/A')})")
+        
+        col1, col2 = st.columns(2)
+        if col1.button("Back") and st.session_state.current_step > 0:
+            st.session_state.current_step -= 1; st.rerun()
+        if col2.button("Next") and st.session_state.current_step < len(steps)-1:
+            st.session_state.current_step += 1; st.rerun()
+    else:
+        st.error("Error: Current step is invalid.")
