@@ -24,12 +24,13 @@ def get_recipe(url, target_servings, status_container):
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         
-        # --- PASS 1: Strict Extraction ---
+        # --- PASS 1: Strict Extraction with Cross-Referencing ---
         status_container.update(label="Pass 1: Extracting exact recipe text...", state="running")
         extract_prompt = f"""
         Extract the recipe from the source text EXACTLY as written. 
-        CRITICAL: Do not add, remove, or modify any ingredients or instructions. Do not convert units. Do not change the cooking method.
         Identify the original number of servings. If not found, assume 1.
+        
+        CRITICAL: The step-by-step instructions usually do not contain the measurements. For EVERY ingredient you place in a step's JSON, you MUST look up its exact measurement from the master 'Ingredients' list at the beginning of the text. Do not output 'Not specified' unless it truly is missing from the entire recipe.
         
         Output JSON only:
         {{
@@ -39,7 +40,7 @@ def get_recipe(url, target_servings, status_container):
               "action_header": "Title",
               "description": "Exact instruction text",
               "timer_minutes": 0,
-              "ingredients": [ {{"name": "ingredient name", "original_amount": "exact amount from text"}} ]
+              "ingredients": [ {{"name": "ingredient name", "original_amount": "exact amount from the master list (e.g. '700 g / 1.2 lb')"}} ]
             }}
           ]
         }}
@@ -55,22 +56,22 @@ def get_recipe(url, target_servings, status_container):
         status_container.update(label=f"Pass 2: Scaling from {original_servings} to {target_servings} servings...", state="running")
         scale_prompt = f"""
         You are a strict mathematical calculator. 
-        Take the following recipe JSON and scale it from its original {original_servings} servings to {target_servings} servings.
-        Multiply every ingredient amount by ({target_servings} / {original_servings}).
+        Take the following recipe JSON and scale it from {original_servings} servings to {target_servings} servings.
+        Multiply the numbers in 'original_amount' by ({target_servings} / {original_servings}).
         
-        For each ingredient, calculate the newly scaled amount and provide it in both metric and imperial units as a list of strings in the 'amount_options' array. Keep the descriptions and steps exactly the same.
+        For each ingredient, provide the scaled amount in both metric and imperial units as a list of strings in the 'amount_options' array. If an ingredient has no specific number (e.g., "a pinch"), just pass the text through in the array.
         
         Output JSON only:
         {{
           "steps": [
             {{
               "action_header": "Title",
-              "description": "Short instruction",
+              "description": "Keep exact description from input",
               "timer_minutes": 0,
               "ingredients": [ 
                 {{
                     "name": "ingredient name", 
-                    "amount_options": ["scaled metric", "scaled imperial", "alternative unit"] 
+                    "amount_options": ["scaled metric", "scaled imperial"] 
                 }} 
               ]
             }}
