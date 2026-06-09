@@ -1,17 +1,3 @@
-import streamlit as st
-import google.generativeai as genai
-import requests
-from bs4 import BeautifulSoup
-import json
-
-# --- Config ---
-if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
-if "current_step" not in st.session_state: st.session_state.current_step = 0
-
-# --- Logic ---
 def get_recipe(url, target_servings, status_container):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -24,15 +10,18 @@ def get_recipe(url, target_servings, status_container):
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         
-        # --- PASS 1: Strict Extraction with Cross-Referencing ---
-        status_container.update(label="Pass 1: Extracting exact recipe text...", state="running")
+        # --- PASS 1: Strict Extraction with Forced Context Injection ---
+        status_container.update(label="Pass 1: Mapping steps to master ingredient list...", state="running")
         extract_prompt = f"""
-        Extract the recipe from the source text EXACTLY as written. 
-        Identify the original number of servings. If not found, assume 1.
+        You are a data extraction bot. 
+        Step 1: First, list all ingredients and their exact measurements from the 'Ingredients' section of the provided text.
+        Step 2: Now, process the 'Steps' section. For every ingredient mentioned in a step, assign the exact measurement you found in Step 1.
         
-        CRITICAL: The step-by-step instructions usually do not contain the measurements. For EVERY ingredient you place in a step's JSON, you MUST look up its exact measurement from the master 'Ingredients' list at the beginning of the text. Do not output 'Not specified' unless it truly is missing from the entire recipe.
+        CRITICAL: If a step mentions 'garlic powder' but not the amount, you MUST insert the amount found in the master list. Do not use 'Not specified'.
         
-        Output JSON only:
+        Source text: {text}
+        
+        Return JSON only:
         {{
           "original_servings": 2,
           "steps": [
@@ -40,11 +29,10 @@ def get_recipe(url, target_servings, status_container):
               "action_header": "Title",
               "description": "Exact instruction text",
               "timer_minutes": 0,
-              "ingredients": [ {{"name": "ingredient name", "original_amount": "exact amount from the master list (e.g. '700 g / 1.2 lb')"}} ]
+              "ingredients": [ {{"name": "ingredient name", "original_amount": "full measurement from master list"}} ]
             }}
           ]
         }}
-        Source text: {text}
         """
         
         res1 = model.generate_content(extract_prompt)
@@ -52,32 +40,13 @@ def get_recipe(url, target_servings, status_container):
         extracted_data = json.loads(clean_res1)
         original_servings = extracted_data.get("original_servings", 1)
         
-        # --- PASS 2: Mathematical Scaling ---
+        # --- PASS 2: Scaling (same as before) ---
         status_container.update(label=f"Pass 2: Scaling from {original_servings} to {target_servings} servings...", state="running")
         scale_prompt = f"""
-        You are a strict mathematical calculator. 
-        Take the following recipe JSON and scale it from {original_servings} servings to {target_servings} servings.
-        Multiply the numbers in 'original_amount' by ({target_servings} / {original_servings}).
+        Take this JSON and scale ingredients from {original_servings} to {target_servings} servings.
+        Multiply amounts by ({target_servings}/{original_servings}). Provide metric and imperial conversions in 'amount_options'.
         
-        For each ingredient, provide the scaled amount in both metric and imperial units as a list of strings in the 'amount_options' array. If an ingredient has no specific number (e.g., "a pinch"), just pass the text through in the array.
-        
-        Output JSON only:
-        {{
-          "steps": [
-            {{
-              "action_header": "Title",
-              "description": "Keep exact description from input",
-              "timer_minutes": 0,
-              "ingredients": [ 
-                {{
-                    "name": "ingredient name", 
-                    "amount_options": ["scaled metric", "scaled imperial"] 
-                }} 
-              ]
-            }}
-          ]
-        }}
-        Original JSON to scale: {json.dumps(extracted_data)}
+        JSON: {json.dumps(extracted_data)}
         """
         
         res2 = model.generate_content(scale_prompt)
@@ -89,73 +58,3 @@ def get_recipe(url, target_servings, status_container):
         
     except Exception as e:
         return {"error": str(e)}
-
-# --- UI ---
-st.title("Interactive AI Kitchen")
-
-if st.session_state.recipe_data is None:
-    col1, col2 = st.columns([0.8, 0.2])
-    url = col1.text_input("Paste Recipe URL:")
-    servings = col2.number_input("Servings:", min_value=1, value=2, step=1)
-    
-    st.write("") 
-    col_l, col_center, col_r = st.columns([1, 2, 1])
-    with col_center:
-        if st.button("Go", type="primary", use_container_width=True):
-            with st.status("Initializing AI Pipeline...", expanded=True) as status:
-                result = get_recipe(url, servings, status)
-                
-            if "error" in result:
-                st.error(f"Error: {result['error']}")
-            else:
-                st.session_state.recipe_data = result
-                st.session_state.current_step = 0
-                st.rerun()
-else:
-    if st.sidebar.button("Clear / New Recipe"):
-        st.session_state.recipe_data = None
-        st.rerun()
-
-    recipe = st.session_state.recipe_data
-    steps = recipe.get('steps', [])
-    
-    if steps:
-        if st.session_state.current_step >= len(steps): st.session_state.current_step = 0
-        step = steps[st.session_state.current_step]
-        
-        st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
-        st.markdown(f"### 🥣 {step.get('action_header', 'Step')}")
-        st.info(step.get('description', ''))
-        
-        if step.get('timer_minutes', 0) > 0:
-            st.error(f"⏰ Timer: {step['timer_minutes']} minutes")
-        
-        for i, ing in enumerate(step.get('ingredients', [])):
-            ing_name = ing.get('name', 'Ingredient')
-            options = ing.get('amount_options', ["Amount not specified"])
-            
-            st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
-            
-            st.selectbox(
-                label=f"amount_{st.session_state.current_step}_{i}",
-                options=options,
-                key=f"select_{st.session_state.current_step}_{i}",
-                label_visibility="collapsed"
-            )
-        
-        st.write("") 
-        
-        col_space, col_back, col_next = st.columns([6, 1, 1])
-        
-        with col_space:
-            st.empty() 
-            
-        with col_back:
-            if st.button("Back", use_container_width=True) and st.session_state.current_step > 0:
-                st.session_state.current_step -= 1
-                st.rerun()
-                
-        with col_next:
-            if st.button("Next", use_container_width=True) and st.session_state.current_step < len(steps)-1:
-                st.session_state.current_step += 1
-                st.rerun()
