@@ -60,7 +60,13 @@ if st.session_state.recipe_data is None:
     url = col1.text_input("Paste Recipe URL:")
     servings = col2.number_input("Servings:", min_value=1, value=2, step=1)
     
-    if st.button("Go"):
+    # Centered and enlarged 'Go' button
+    st.write("") # Small spacer
+    col_l, col_center, col_r = st.columns([1, 2, 1])
+    with col_center:
+        go_pressed = st.button("Go", type="primary", use_container_width=True)
+    
+    if go_pressed:
         with st.spinner("Loading..."):
             result = get_recipe(url, servings)
             if "error" in result:
@@ -92,7 +98,6 @@ else:
             ing_name = ing.get('name', 'Ingredient')
             options = ing.get('amount_options', ["Amount not specified"])
             
-            # FIXED: Completed the broken f-string here
             st.checkbox(ing_name, key=f"check_{st.session_state.current_step}_{i}")
             
             st.selectbox(
@@ -102,7 +107,7 @@ else:
                 label_visibility="collapsed"
             )
         
-        # Spacer column pushes buttons to the right
+        # Spacer column pushes Next/Back buttons to the right
         col_space, col_back, col_next = st.columns([0.7, 0.15, 0.15])
         
         with col_back:
