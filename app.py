@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import json
 
 # --- Config ---
+# Ensure your Streamlit Secret GEMINI_API_KEY is from a NEW, clean project
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
@@ -21,18 +22,21 @@ def get_recipe(url):
         soup = BeautifulSoup(response.text, "html.parser")
         text = "\n".join([t.get_text() for t in soup.find_all(['h1', 'h2', 'li', 'p']) if len(t.get_text()) > 10])[1000:4000]
         
-        prompt = f"""Extract recipe into a JSON object: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
+        prompt = f"""Extract recipe into this exact JSON structure: {{"steps": [ {{"action_header": "...", "description": "...", "timer_minutes": 0, "ingredients": [] }} ] }}. 
         Source: {text}"""
         
-        # Using the current latest stable model
+        # USE gemini-3.5-flash (The current stable model as of June 2026)
         model = genai.GenerativeModel("gemini-3.5-flash")
         res = model.generate_content(prompt)
         
         clean_res = res.text.strip().replace("```json", "").replace("```", "")
-        raw = json.loads(clean_res)
+        data = json.loads(clean_res)
         
-        if isinstance(raw, list): raw = {"steps": raw}
-        return raw
+        # Ensure it is a dictionary with a 'steps' key
+        if isinstance(data, list): data = {"steps": data}
+        if "steps" not in data: data = {"steps": [data]}
+            
+        return data
     except Exception as e:
         return {"error": str(e)}
 
