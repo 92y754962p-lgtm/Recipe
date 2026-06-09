@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
@@ -33,17 +34,34 @@ def fetch_and_parse(url):
 # --- UI ---
 st.title("Interactive AI Kitchen")
 
+# Clipboard Paste Logic
+js_paste = """
+<button id="pasteBtn" style="width:100%; padding: 10px; background-color: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer;">📋 Paste URL & Start Cooking</button>
+<script>
+    const btn = document.getElementById('pasteBtn');
+    btn.onclick = async () => {
+        const text = await navigator.clipboard.readText();
+        window.parent.postMessage({type: 'streamlit:setComponentValue', value: text}, '*');
+    };
+</script>
+"""
+
 if st.session_state.recipe_data is None:
-    # We use a simple input. If you have the URL copied, 
-    # you can just press 'Ctrl+V' (or Command+V) then 'Enter'.
-    url = st.text_input("Paste Recipe URL:", key="url_in")
-    if url: # Auto-detect input
+    val = components.html(js_paste, height=50)
+    # If the JS component returns a value, it means the user clicked it
+    if val:
+        with st.spinner("Parsing..."):
+            st.session_state.recipe_data = fetch_and_parse(val)
+            st.session_state.current_step = 0
+            st.rerun()
+
+    url = st.text_input("Or paste manually:", key="url_in")
+    if url: 
         with st.spinner("Parsing..."):
             st.session_state.recipe_data = fetch_and_parse(url)
             st.session_state.current_step = 0
             st.rerun()
 else:
-    # Sidebar control
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
         st.rerun()
