@@ -21,47 +21,47 @@ def get_recipe(url, target_servings, status_container):
         
         model = genai.GenerativeModel("gemini-3.5-flash")
         
-        # Pass 1: Extraction
+        # Pass 1: Extract Ground Truth
         status_container.update(label="Extracting ingredients...", state="running")
-        p1 = f"Extract a JSON dictionary of all ingredients and their exact amounts from: {text[:8000]}"
+        p1 = f"Return JSON dictionary of ingredients and amounts from: {text[:8000]}"
         r1 = model.generate_content(p1)
         gt = json.loads(r1.text.replace("```json", "").replace("```", ""))
         
-        # Pass 2: Mapping
-        status_container.update(label="Mapping steps...", state="running")
-        p2 = f"""Using ONLY this ground truth: {json.dumps(gt)}
+        # Pass 2: Map and Scale
+        status_container.update(label="Scaling recipe steps...", state="running")
+        p2 = f"""Use this list: {json.dumps(gt)}. 
         Write steps for {target_servings} servings. 
-        For every ingredient in a step, replace the name with the value from ground truth.
-        Return JSON: {{"steps": [{{"title": "Step", "text": "Instruction", "items": ["700g chicken"]}}]}}
+        Replace names with amounts from list.
+        Return JSON: {{"steps": [{{"title": "...", "text": "...", "items": ["700g chicken"]}}]}}
         Text: {text[:8000]}"""
         r2 = model.generate_content(p2)
         return json.loads(r2.text.replace("```json", "").replace("```", ""))
     except Exception as e:
         return {"error": str(e)}
 
-# --- UI ---
+# --- UI Layout ---
 st.title("Interactive AI Kitchen")
 
-if st.session_state.recipe_data is None:
-    col1, col2 = st.columns([0.8, 0.2])
-    url = col1.text_input("Paste Recipe URL:")
-    servings = col2.number_input("Servings:", min_value=1, value=2)
-    
-    st.write("")
-    _, col_center, _ = st.columns([1, 2, 1])
-    if col_center.button("Go", type="primary", use_container_width=True):
-        with st.status("Initializing...", expanded=True) as status:
-            data = get_recipe(url, servings, status)
-            if "error" in data: st.error(data["error"])
-            else: 
-                st.session_state.recipe_data = data
-                st.session_state.current_step = 0
-                st.rerun()
-else:
+# Input Section
+col1, col2 = st.columns([0.8, 0.2])
+url = col1.text_input("Paste Recipe URL:")
+servings = col2.number_input("Servings:", min_value=1, value=2)
+
+if st.button("Go", type="primary"):
+    with st.status("Initializing...", expanded=True) as status:
+        data = get_recipe(url, servings, status)
+        if "error" in data: st.error(data["error"])
+        else:
+            st.session_state.recipe_data = data
+            st.session_state.current_step = 0
+            st.rerun()
+
+# Recipe Display Section
+if st.session_state.recipe_data:
     if st.sidebar.button("Clear / New Recipe"):
         st.session_state.recipe_data = None
         st.rerun()
-
+    
     steps = st.session_state.recipe_data["steps"]
     step = steps[st.session_state.current_step]
     
@@ -72,10 +72,11 @@ else:
     for j, item in enumerate(step["items"]):
         st.checkbox(item, key=f"chk_{st.session_state.current_step}_{j}")
     
-    col_space, col_back, col_next = st.columns([6, 1, 1])
-    with col_back:
+    # Navigation
+    c1, c2, c3 = st.columns([6, 1, 1])
+    with c2:
         if st.button("Back") and st.session_state.current_step > 0:
             st.session_state.current_step -= 1; st.rerun()
-    with col_next:
+    with c3:
         if st.button("Next") and st.session_state.current_step < len(steps)-1:
             st.session_state.current_step += 1; st.rerun()
