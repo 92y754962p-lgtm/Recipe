@@ -12,7 +12,7 @@ if "recipe_data" not in st.session_state: st.session_state.recipe_data = None
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 
 # --- Logic ---
-def get_recipe(url, target_servings):
+def get_recipe(url, target_servings, status_container):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
@@ -22,14 +22,16 @@ def get_recipe(url, target_servings):
         model = genai.GenerativeModel("gemini-3.5-flash")
         
         # Pass 1: Extraction
+        status_container.update(label="Extracting ingredients...", state="running")
         p1 = f"Extract a JSON dictionary of all ingredients and their exact amounts from: {text[:8000]}"
         r1 = model.generate_content(p1)
         gt = json.loads(r1.text.replace("```json", "").replace("```", ""))
         
         # Pass 2: Mapping
-        p2 = f"""Using ONLY this ingredient list: {json.dumps(gt)}
+        status_container.update(label="Mapping steps...", state="running")
+        p2 = f"""Using ONLY this ground truth: {json.dumps(gt)}
         Write steps for {target_servings} servings. 
-        For every ingredient in a step, replace the name with the value from the list.
+        For every ingredient in a step, replace the name with the value from ground truth.
         Return JSON: {{"steps": [{{"title": "Step", "text": "Instruction", "items": ["700g chicken"]}}]}}
         Text: {text[:8000]}"""
         r2 = model.generate_content(p2)
@@ -38,37 +40,42 @@ def get_recipe(url, target_servings):
         return {"error": str(e)}
 
 # --- UI ---
-st.title("Interactive Kitchen")
+st.title("Interactive AI Kitchen")
 
-col1, col2 = st.columns([0.8, 0.2])
-url = col1.text_input("Paste Recipe URL:")
-servings = col2.number_input("Servings:", min_value=1, value=2)
+if st.session_state.recipe_data is None:
+    col1, col2 = st.columns([0.8, 0.2])
+    url = col1.text_input("Paste Recipe URL:")
+    servings = col2.number_input("Servings:", min_value=1, value=2)
+    
+    st.write("")
+    _, col_center, _ = st.columns([1, 2, 1])
+    if col_center.button("Go", type="primary", use_container_width=True):
+        with st.status("Initializing...", expanded=True) as status:
+            data = get_recipe(url, servings, status)
+            if "error" in data: st.error(data["error"])
+            else: 
+                st.session_state.recipe_data = data
+                st.session_state.current_step = 0
+                st.rerun()
+else:
+    if st.sidebar.button("Clear / New Recipe"):
+        st.session_state.recipe_data = None
+        st.rerun()
 
-if st.button("Go", type="primary"):
-    with st.spinner("Processing..."):
-        data = get_recipe(url, servings)
-        if "error" in data: st.error(data["error"])
-        else: 
-            st.session_state.recipe_data = data
-            st.session_state.current_step = 0
-            st.rerun()
-
-if st.session_state.recipe_data:
     steps = st.session_state.recipe_data["steps"]
     step = steps[st.session_state.current_step]
     
     st.caption(f"Step {st.session_state.current_step + 1} of {len(steps)}")
     st.subheader(step["title"])
-    st.write(step["text"])
+    st.info(step["text"])
     
     for j, item in enumerate(step["items"]):
-        # Unique keys fix the crash
         st.checkbox(item, key=f"chk_{st.session_state.current_step}_{j}")
     
-    col_back, col_next = st.columns(2)
-    if col_back.button("Back") and st.session_state.current_step > 0:
-        st.session_state.current_step -= 1
-        st.rerun()
-    if col_next.button("Next") and st.session_state.current_step < len(steps)-1:
-        st.session_state.current_step += 1
-        st.rerun()
+    col_space, col_back, col_next = st.columns([6, 1, 1])
+    with col_back:
+        if st.button("Back") and st.session_state.current_step > 0:
+            st.session_state.current_step -= 1; st.rerun()
+    with col_next:
+        if st.button("Next") and st.session_state.current_step < len(steps)-1:
+            st.session_state.current_step += 1; st.rerun()
