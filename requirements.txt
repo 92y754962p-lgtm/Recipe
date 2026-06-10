@@ -1,6 +1,5 @@
 streamlit
 google-generativeai
 recipe-scrapers
-cloudscraper
 beautifulsoup4
 requests
