@@ -1,6 +1,7 @@
 import streamlit as st
-from recipe_scrapers import scrape_me
+from recipe_scrapers import scrape_html
 import google.generativeai as genai
+import requests
 import json
 
 # --- Config ---
@@ -25,8 +26,12 @@ if not st.session_state.is_loaded:
     if st.button("Fetch and Build", use_container_width=True):
         with st.status("Structuring recipe...", expanded=True) as status:
             try:
-                # Pass the headers to the scraper
-                scraper = scrape_me(url, headers=headers)
+                # 1. Fetch HTML manually with spoofed headers
+                response = requests.get(url, headers=headers, timeout=15)
+                response.raise_for_status() 
+                
+                # 2. Pass the raw HTML to the scraper
+                scraper = scrape_html(html=response.content, org_url=url)
                 
                 model = genai.GenerativeModel("gemini-3.5-flash")
                 prompt = f"""
