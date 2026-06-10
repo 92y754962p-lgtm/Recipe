@@ -1,7 +1,7 @@
 import streamlit as st
 from recipe_scrapers import scrape_html
 import google.generativeai as genai
-import requests
+import cloudscraper
 import json
 
 # --- Config ---
@@ -13,11 +13,6 @@ if "step" not in st.session_state: st.session_state.step = 0
 if "is_loaded" not in st.session_state: st.session_state.is_loaded = False
 if "checked_ingredients" not in st.session_state: st.session_state.checked_ingredients = {}
 
-# Define a realistic browser identity to bypass 403 errors
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
-
 # --- Page Logic ---
 if not st.session_state.is_loaded:
     st.title("Interactive Kitchen")
@@ -26,13 +21,19 @@ if not st.session_state.is_loaded:
     if st.button("Fetch and Build", use_container_width=True):
         with st.status("Structuring recipe...", expanded=True) as status:
             try:
-                # 1. Fetch HTML manually with spoofed headers
-                response = requests.get(url, headers=headers, timeout=15)
+                # 1. Use Cloudscraper to bypass Cloudflare/403 blocks
+                scraper_client = cloudscraper.create_scraper(browser={
+                    'browser': 'chrome',
+                    'platform': 'windows',
+                    'desktop': True
+                })
+                response = scraper_client.get(url, timeout=15)
                 response.raise_for_status() 
                 
-                # 2. Pass the raw HTML to the scraper
-                scraper = scrape_html(html=response.content, org_url=url)
+                # 2. Pass the unblocked raw HTML to the recipe parser
+                scraper = scrape_html(html=response.text, org_url=url)
                 
+                # 3. LLM Structural Mapping
                 model = genai.GenerativeModel("gemini-3.5-flash")
                 prompt = f"""
                 Map these ingredients to these steps.
@@ -52,7 +53,7 @@ if not st.session_state.is_loaded:
                 st.session_state.recipe = {"title": scraper.title(), "all_ing": scraper.ingredients(), **data}
                 st.session_state.is_loaded = True
                 st.session_state.step = 0
-                st.session_state.checked_ingredients = {} # Reset checkboxes
+                st.session_state.checked_ingredients = {} 
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
